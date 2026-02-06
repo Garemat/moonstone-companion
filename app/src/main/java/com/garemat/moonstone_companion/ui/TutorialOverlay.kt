@@ -69,7 +69,7 @@ fun TutorialOverlay(
                 .background(Color.Black.copy(alpha = 0.5f))
                 // Consume all pointer events to prevent clicking elements behind the tutorial
                 .pointerInput(Unit) {
-                    detectTapGestures { }
+                    detectTapGestures { /* Do nothing, just consume */ }
                 }
         ) {
             val isArrowless = currentStep.isArrowless
