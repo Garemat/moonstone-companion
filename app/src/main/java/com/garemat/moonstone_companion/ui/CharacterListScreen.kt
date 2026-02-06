@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.garemat.moonstone_companion.*
@@ -101,7 +102,13 @@ fun CharacterListScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { showFilterBar = !showFilterBar }) {
+                        IconButton(
+                            onClick = { showFilterBar = !showFilterBar },
+                            modifier = Modifier.onGloballyPositioned {
+                                coordsMap["FilterButtonOpen"] = it
+                                coordsMap["FilterButtonClose"] = it
+                            }
+                        ) {
                             Icon(
                                 imageVector = if (showFilterBar) Icons.Default.FilterListOff else Icons.Default.FilterList,
                                 contentDescription = "Toggle Filters",
@@ -166,8 +173,9 @@ fun CharacterListScreen(
                                     expandedCharacterIds + character.id
                                 }
                             },
+                            cardTargetName = if (isFirst) "FirstCharacterCard" else "CharacterCard",
                             onPositioned = { name, coords -> 
-                                if (isFirst) coordsMap[name] = coords 
+                                if (isFirst || name == "FlipButton") coordsMap[name] = coords
                             },
                             forceFlipped = if (shouldShowTutorial && isFirst && expandedCharacterIds.contains(character.id) && tutorialStepIndex >= 8) true else null
                         )

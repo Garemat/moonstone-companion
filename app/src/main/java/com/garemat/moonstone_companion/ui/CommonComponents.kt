@@ -293,11 +293,11 @@ fun CharacterBack(character: Character, searchQuery: String, onFlip: () -> Unit,
 }
 
 @Composable
-fun CommonCharacterCard(character: Character, searchQuery: String, isExpanded: Boolean, onExpandClick: () -> Unit, modifier: Modifier = Modifier, onPositioned: (String, LayoutCoordinates) -> Unit = { _, _ -> }, forceFlipped: Boolean? = null, selectionControl: @Composable (RowScope.() -> Unit)? = null) {
+fun CommonCharacterCard(character: Character, searchQuery: String, isExpanded: Boolean, onExpandClick: () -> Unit, modifier: Modifier = Modifier, cardTargetName: String = "CharacterCard", onPositioned: (String, LayoutCoordinates) -> Unit = { _, _ -> }, forceFlipped: Boolean? = null, selectionControl: @Composable (RowScope.() -> Unit)? = null) {
     var isFlippedState by remember { mutableStateOf(false) }; val isFlipped = forceFlipped ?: isFlippedState
     val context = LocalContext.current; val appTheme = LocalAppTheme.current
     val imageRes = remember(character.imageName) { if (character.imageName != null) context.resources.getIdentifier(character.imageName.substringBeforeLast("."), "drawable", context.packageName) else 0 }
-    Card(modifier = modifier.fillMaxWidth().animateContentSize().onGloballyPositioned { onPositioned("CharacterCard", it) }, shape = RoundedCornerShape(if (appTheme == AppTheme.MOONSTONE) 0.dp else 12.dp), elevation = CardDefaults.cardElevation(defaultElevation = if (appTheme == AppTheme.MOONSTONE) 2.dp else 4.dp), colors = CardDefaults.cardColors(containerColor = if (appTheme == AppTheme.MOONSTONE) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface)) {
+    Card(modifier = modifier.fillMaxWidth().animateContentSize().onGloballyPositioned { onPositioned(cardTargetName, it) }, shape = RoundedCornerShape(if (appTheme == AppTheme.MOONSTONE) 0.dp else 12.dp), elevation = CardDefaults.cardElevation(defaultElevation = if (appTheme == AppTheme.MOONSTONE) 2.dp else 4.dp), colors = CardDefaults.cardColors(containerColor = if (appTheme == AppTheme.MOONSTONE) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface)) {
         Column {
             Row(modifier = Modifier.fillMaxWidth().clickable { onExpandClick() }.padding(if (selectionControl != null) 8.dp else 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 if (selectionControl != null) { selectionControl(); Spacer(modifier = Modifier.width(4.dp)) }
