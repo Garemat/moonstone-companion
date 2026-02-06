@@ -146,7 +146,7 @@ class CharacterViewModel(
                     initialStates["${pIdx}_${cIdx}"] = CharacterPlayState(currentHealth = character.health)
                 }
             }
-            _state.update { it.copy(characterPlayStates = initialStates) }
+            _state.update { it.copy(characterPlayStates = initialStates, currentTurn = 1) }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -234,16 +234,24 @@ class CharacterViewModel(
                 updateCharacterState(event.playerIndex, event.charIndex) { 
                     it.copy(isFlipped = event.flipped) 
                 }
-                // Removed flip synchronization
             }
             is CharacterEvent.ToggleCharacterExpanded -> {
                 updateCharacterState(event.playerIndex, event.charIndex) { 
                     it.copy(isExpanded = event.expanded) 
                 }
-                // Removed expand synchronization
             }
             CharacterEvent.ResetGamePlayState -> {
-                _state.update { it.copy(characterPlayStates = emptyMap()) }
+                _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1) }
+            }
+            CharacterEvent.NextTurn -> {
+                _state.update { it.copy(currentTurn = it.currentTurn + 1) }
+                broadcastTurnUpdate(_state.value.currentTurn)
+            }
+            is CharacterEvent.UpdateCharacterMoonstones -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(moonstones = event.stones) 
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, moonstones = event.stones))
             }
             else -> {}
         }
@@ -260,7 +268,7 @@ class CharacterViewModel(
     }
 
     fun startNewGame(troupes: List<Troupe>) {
-        _state.update { it.copy(characterPlayStates = emptyMap()) } // Clear previous game state
+        _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1) } // Clear previous game state
         _activeTroupes.value = troupes
     }
 
@@ -418,6 +426,7 @@ class CharacterViewModel(
                     var newState = currentState
                     message.health?.let { newState = newState.copy(currentHealth = it) }
                     message.energy?.let { newState = newState.copy(currentEnergy = it) }
+                    message.moonstones?.let { newState = newState.copy(moonstones = it) }
                     message.abilityName?.let { name ->
                         message.abilityUsed?.let { used ->
                             val newAbilities = newState.usedAbilities.toMutableMap()
@@ -428,6 +437,12 @@ class CharacterViewModel(
                     newState
                 }
                 // If host, rebroadcast to others
+                if (currentSession.isHost) {
+                    nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                }
+            }
+            is SessionMessage.TurnUpdate -> {
+                _state.update { it.copy(currentTurn = message.turn) }
                 if (currentSession.isHost) {
                     nearbyManager.sendPayloadToAll(MessageParser.encode(message))
                 }
@@ -474,6 +489,11 @@ class CharacterViewModel(
     fun broadcastGameplayUpdate(update: SessionMessage.GameplayUpdate) {
         val session = _state.value.gameSession ?: return
         nearbyManager.sendPayloadToAll(MessageParser.encode(update))
+    }
+
+    fun broadcastTurnUpdate(turn: Int) {
+        val session = _state.value.gameSession ?: return
+        nearbyManager.sendPayloadToAll(MessageParser.encode(SessionMessage.TurnUpdate(turn)))
     }
 
     fun broadcastStartGame() {

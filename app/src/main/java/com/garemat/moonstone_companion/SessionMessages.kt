@@ -32,9 +32,13 @@ sealed class SessionMessage {
         val charIndex: Int,
         val health: Int? = null,
         val energy: Int? = null,
+        val moonstones: Int? = null,
         val abilityName: String? = null,
         val abilityUsed: Boolean? = null
     ) : SessionMessage()
+
+    @Serializable
+    data class TurnUpdate(val turn: Int) : SessionMessage()
 }
 
 object MessageParser {

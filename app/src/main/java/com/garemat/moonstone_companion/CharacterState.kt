@@ -29,6 +29,7 @@ data class CharacterState(
     val gameSession: GameSession? = null,
 
     // Active Game Play State
+    val currentTurn: Int = 1,
     // Key: "playerIndex_characterIndex"
     val characterPlayStates: Map<String, CharacterPlayState> = emptyMap()
 )
@@ -37,6 +38,7 @@ data class CharacterState(
 data class CharacterPlayState(
     val currentHealth: Int,
     val currentEnergy: Int = 0,
+    val moonstones: Int = 0,
     val usedAbilities: Map<String, Boolean> = emptyMap(),
     val isFlipped: Boolean = false,
     val isExpanded: Boolean = false

@@ -31,4 +31,8 @@ sealed interface CharacterEvent {
     data class ToggleCharacterFlipped(val playerIndex: Int, val charIndex: Int, val flipped: Boolean) : CharacterEvent
     data class ToggleCharacterExpanded(val playerIndex: Int, val charIndex: Int, val expanded: Boolean) : CharacterEvent
     data object ResetGamePlayState : CharacterEvent
+    
+    // Turn and Moonstone Events
+    data object NextTurn : CharacterEvent
+    data class UpdateCharacterMoonstones(val playerIndex: Int, val charIndex: Int, val stones: Int) : CharacterEvent
 }
