@@ -1097,9 +1097,9 @@ fun SelectionCharacterCard(
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 Box(modifier = Modifier.padding(16.dp)) {
                     if (!isFlipped) {
-                        CharacterFront(character = character, onFlip = { isFlipped = true })
+                        CharacterFront(character = character, searchQuery = "", onFlip = { isFlipped = true })
                     } else {
-                        CharacterBack(character = character, onFlip = { isFlipped = false })
+                        CharacterBack(character = character, searchQuery = "", onFlip = { isFlipped = false })
                     }
                 }
             }

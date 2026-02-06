@@ -12,7 +12,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,8 +29,6 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -54,7 +51,8 @@ fun CharacterListScreen(
     onEvent: (CharacterEvent) -> Unit,
     onNavigateBack: () -> Unit
 ) {
-    var expandedCharacterId by remember { mutableStateOf<Int?>(null) }
+    // Track expanded characters as a set to allow multiple expansions during search
+    var expandedCharacterIds by remember { mutableStateOf(setOf<Int>()) }
     var lastBackPressTime by remember { mutableLongStateOf(0L) }
     
     // Search & Filter State
@@ -71,6 +69,26 @@ fun CharacterListScreen(
     
     var selectedTags by remember { mutableStateOf(setOf<String>()) }
     var showFilterBar by remember { mutableStateOf(false) }
+
+    // Re-collapse all and clear search-driven expansions when search is cleared
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isEmpty()) {
+            expandedCharacterIds = emptySet()
+        } else {
+            // Auto-expand characters that match the search query
+            val matchingIds = state.characters.filter { character ->
+                character.name.contains(searchQuery, ignoreCase = true) ||
+                character.passiveAbilities.any { it.name.contains(searchQuery, ignoreCase = true) || it.description.contains(searchQuery, ignoreCase = true) } ||
+                character.activeAbilities.any { it.name.contains(searchQuery, ignoreCase = true) || it.description.contains(searchQuery, ignoreCase = true) } ||
+                character.arcaneAbilities.any { it.name.contains(searchQuery, ignoreCase = true) || it.description.contains(searchQuery, ignoreCase = true) }
+            }.map { it.id }.toSet()
+            
+            // Only auto-expand if there are a few matches to avoid overwhelming the screen
+            if (matchingIds.size in 1..3) {
+                expandedCharacterIds = expandedCharacterIds + matchingIds
+            }
+        }
+    }
 
     // Tutorial state
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
@@ -220,16 +238,32 @@ fun CharacterListScreen(
                                 }
                             }
                             
-                            if (searchQuery.isNotEmpty() || selectedFactions.isNotEmpty() || selectedTags.isNotEmpty()) {
-                                TextButton(
-                                    onClick = {
-                                        searchQuery = ""
-                                        selectedFactions = emptySet()
-                                        selectedTags = emptySet()
-                                    },
-                                    modifier = Modifier.align(Alignment.End)
-                                ) {
-                                    Text("Clear All Filters")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (expandedCharacterIds.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = { expandedCharacterIds = emptySet() }
+                                    ) {
+                                        Icon(Icons.Default.UnfoldLess, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Collapse All")
+                                    }
+                                }
+                                
+                                if (searchQuery.isNotEmpty() || selectedFactions.isNotEmpty() || selectedTags.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = {
+                                            searchQuery = ""
+                                            selectedFactions = emptySet()
+                                            selectedTags = emptySet()
+                                            expandedCharacterIds = emptySet()
+                                        }
+                                    ) {
+                                        Text("Clear All Filters")
+                                    }
                                 }
                             }
                         }
@@ -253,20 +287,26 @@ fun CharacterListScreen(
                         val isFirst = filteredCharacters.firstOrNull()?.id == character.id
                         CharacterListItem(
                             character = character,
-                            isExpanded = expandedCharacterId == character.id,
+                            searchQuery = searchQuery,
+                            isExpanded = expandedCharacterIds.contains(character.id),
                             onExpandClick = {
-                                expandedCharacterId = if (expandedCharacterId == character.id) null else character.id
+                                expandedCharacterIds = if (expandedCharacterIds.contains(character.id)) {
+                                    expandedCharacterIds - character.id
+                                } else {
+                                    expandedCharacterIds + character.id
+                                }
                             },
                             onPositioned = { name, coords -> 
                                 if (isFirst) coordsMap[name] = coords 
                             },
-                            forceFlipped = if (shouldShowTutorial && isFirst && expandedCharacterId == character.id && tutorialStepIndex >= 8) true else null
+                            forceFlipped = if (shouldShowTutorial && isFirst && expandedCharacterIds.contains(character.id) && tutorialStepIndex >= 8) true else null
                         )
                     }
                 }
             }
         }
 
+        // Help button in top left - Consistent with other screens
         IconButton(
             onClick = { showTutorialForcefully = true },
             modifier = Modifier
@@ -284,13 +324,13 @@ fun CharacterListScreen(
                     onComplete = {
                         onEvent(CharacterEvent.SetHasSeenTutorial("characters", true))
                         showTutorialForcefully = false
-                        expandedCharacterId = null
+                        expandedCharacterIds = emptySet()
                         tutorialStepIndex = 0
                     },
                     onSkip = {
                         onEvent(CharacterEvent.SetHasSeenTutorial("characters", true))
                         showTutorialForcefully = false
-                        expandedCharacterId = null
+                        expandedCharacterIds = emptySet()
                         tutorialStepIndex = 0
                     },
                     onStepChange = { step ->
@@ -300,14 +340,16 @@ fun CharacterListScreen(
                             1, 2, 3, 4 -> showFilterBar = true
                             5 -> {
                                 showFilterBar = false
-                                expandedCharacterId = null
+                                expandedCharacterIds = emptySet()
                             }
                             6 -> {
-                                expandedCharacterId = filteredCharacters.firstOrNull()?.id
+                                val firstId = filteredCharacters.firstOrNull()?.id
+                                if (firstId != null) expandedCharacterIds = setOf(firstId)
                                 scope.launch { listState.animateScrollToItem(0) }
                             }
                             7 -> {
-                                expandedCharacterId = filteredCharacters.firstOrNull()?.id
+                                val firstId = filteredCharacters.firstOrNull()?.id
+                                if (firstId != null) expandedCharacterIds = setOf(firstId)
                             }
                         }
                     }
@@ -320,6 +362,7 @@ fun CharacterListScreen(
 @Composable
 fun CharacterListItem(
     character: Character,
+    searchQuery: String,
     isExpanded: Boolean,
     onExpandClick: () -> Unit,
     onPositioned: (String, LayoutCoordinates) -> Unit = { _, _ -> },
@@ -389,7 +432,7 @@ fun CharacterListItem(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = character.name,
+                        text = highlightText(character.name, searchQuery),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -430,12 +473,14 @@ fun CharacterListItem(
                         if (!isFlipped) {
                             CharacterFront(
                                 character = character, 
+                                searchQuery = searchQuery,
                                 onFlip = { isFlippedState = true },
                                 onFlipPositioned = { onPositioned("FlipButton", it) }
                             )
                         } else {
                             CharacterBack(
                                 character = character, 
+                                searchQuery = searchQuery,
                                 onFlip = { isFlippedState = false },
                                 onFlipPositioned = { onPositioned("FlipButton", it) }
                             )
@@ -499,19 +544,21 @@ fun FactionSymbol(faction: Faction, modifier: Modifier = Modifier, tint: Color? 
 @Composable
 fun CharacterFront(
     character: Character, 
+    searchQuery: String,
     onFlip: () -> Unit,
     onFlipPositioned: (LayoutCoordinates) -> Unit = {}
 ) {
     if (LocalAppTheme.current == AppTheme.MOONSTONE) {
-        MoonstoneCharacterFront(character, onFlip, onFlipPositioned)
+        MoonstoneCharacterFront(character, searchQuery, onFlip, onFlipPositioned)
     } else {
-        DefaultCharacterFront(character, onFlip, onFlipPositioned)
+        DefaultCharacterFront(character, searchQuery, onFlip, onFlipPositioned)
     }
 }
 
 @Composable
 fun DefaultCharacterFront(
     character: Character, 
+    searchQuery: String,
     onFlip: () -> Unit,
     onFlipPositioned: (LayoutCoordinates) -> Unit = {}
 ) {
@@ -549,7 +596,7 @@ fun DefaultCharacterFront(
         Column {
             if (character.passiveAbilities.isNotEmpty()) {
                 character.passiveAbilities.forEach { ability ->
-                    PassiveAbilityItem(ability.name, ability.description)
+                    PassiveAbilityItem(ability.name, ability.description, searchQuery)
                 }
             }
 
@@ -562,6 +609,7 @@ fun DefaultCharacterFront(
                     AbilityItem(
                         name = header, 
                         description = ability.description,
+                        searchQuery = searchQuery,
                         oncePerTurn = ability.oncePerTurn,
                         oncePerGame = ability.oncePerGame
                     )
@@ -577,6 +625,7 @@ fun DefaultCharacterFront(
                     AbilityItem(
                         name = header, 
                         description = ability.description,
+                        searchQuery = searchQuery,
                         oncePerTurn = ability.oncePerTurn,
                         oncePerGame = ability.oncePerGame,
                         reloadable = ability.reloadable
@@ -588,8 +637,13 @@ fun DefaultCharacterFront(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Signature Move Link
+        val signatureLinkText = buildAnnotatedString {
+            append("Signature Move: ")
+            appendWithHighlight(character.signatureMove.name, searchQuery)
+            append(".")
+        }
         Text(
-            text = "Signature Move: ${character.signatureMove.name}.",
+            text = signatureLinkText,
             style = MaterialTheme.typography.bodyMedium,
             fontStyle = FontStyle.Italic,
             modifier = Modifier
@@ -616,6 +670,7 @@ fun DefaultCharacterFront(
 @Composable
 fun MoonstoneCharacterFront(
     character: Character, 
+    searchQuery: String,
     onFlip: () -> Unit,
     onFlipPositioned: (LayoutCoordinates) -> Unit = {}
 ) {
@@ -624,7 +679,7 @@ fun MoonstoneCharacterFront(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "${character.name},",
+                    text = buildAnnotatedString { appendWithHighlight(character.name, searchQuery); append(",") },
                     style = MaterialTheme.typography.displayLarge.copy(fontSize = 32.sp),
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -701,7 +756,7 @@ fun MoonstoneCharacterFront(
         Column {
             if (character.passiveAbilities.isNotEmpty()) {
                 character.passiveAbilities.forEach { ability ->
-                    PassiveAbilityItem(ability.name, ability.description)
+                    PassiveAbilityItem(ability.name, ability.description, searchQuery)
                 }
             }
             
@@ -709,7 +764,7 @@ fun MoonstoneCharacterFront(
                 if (character.passiveAbilities.isNotEmpty()) AbilityTypeSeparator()
                 character.activeAbilities.forEach { ability ->
                     val header = "${ability.name} (${ability.cost})" + if (ability.oncePerTurn) " - Once per turn" else ""
-                    AbilityItem(header, ability.description)
+                    AbilityItem(header, ability.description, searchQuery)
                 }
             }
             
@@ -717,7 +772,7 @@ fun MoonstoneCharacterFront(
                 if (character.passiveAbilities.isNotEmpty() || character.activeAbilities.isNotEmpty()) AbilityTypeSeparator()
                 character.arcaneAbilities.forEach { ability ->
                     val header = "${ability.name} (${ability.cost})" + if (ability.oncePerGame) " - Once per game" else ""
-                    AbilityItem(header, ability.description)
+                    AbilityItem(header, ability.description, searchQuery)
                 }
             }
         }
@@ -754,12 +809,13 @@ fun MoonstoneCharacterFront(
 }
 
 @Composable
-fun PassiveAbilityItem(name: String, description: String) {
+fun PassiveAbilityItem(name: String, description: String, searchQuery: String) {
     val fullText = buildAnnotatedString {
         withStyle(style = SpanStyle(fontWeight = FontWeight.Bold)) {
-            append("$name: ")
+            appendWithHighlight(name, searchQuery)
+            append(": ")
         }
-        append(parseAbilityDescription(description))
+        append(parseAbilityDescription(description, searchQuery))
     }
     Text(
         text = fullText,
@@ -771,6 +827,7 @@ fun PassiveAbilityItem(name: String, description: String) {
 
 @Composable
 fun AbilityTypeSeparator() {
+    @Suppress("DEPRECATION")
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -789,19 +846,21 @@ fun AbilityTypeSeparator() {
 @Composable
 fun CharacterBack(
     character: Character, 
+    searchQuery: String,
     onFlip: () -> Unit,
     onFlipPositioned: (LayoutCoordinates) -> Unit = {}
 ) {
     if (LocalAppTheme.current == AppTheme.MOONSTONE) {
-        MoonstoneCharacterBack(character, onFlip, onFlipPositioned)
+        MoonstoneCharacterBack(character, searchQuery, onFlip, onFlipPositioned)
     } else {
-        DefaultCharacterBack(character, onFlip, onFlipPositioned)
+        DefaultCharacterBack(character, searchQuery, onFlip, onFlipPositioned)
     }
 }
 
 @Composable
 fun DefaultCharacterBack(
     character: Character, 
+    searchQuery: String,
     onFlip: () -> Unit,
     onFlipPositioned: (LayoutCoordinates) -> Unit = {}
 ) {
@@ -813,7 +872,7 @@ fun DefaultCharacterBack(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = character.signatureMove.name,
+                text = highlightText(character.signatureMove.name, searchQuery),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -822,7 +881,11 @@ fun DefaultCharacterBack(
                 onClick = onFlip,
                 modifier = Modifier.onGloballyPositioned { onFlipPositioned(it) }
             ) {
-                Icon(Icons.Default.Refresh, contentDescription = "Flip Back", tint = MaterialTheme.colorScheme.primary)
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Flip Back",
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
         }
         Text(
@@ -869,7 +932,7 @@ fun DefaultCharacterBack(
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
                 if (character.signatureMove.passiveEffect != null) {
                     Text(
-                        text = parseAbilityDescription(character.signatureMove.passiveEffect!!),
+                        text = parseAbilityDescription(character.signatureMove.passiveEffect!!, searchQuery),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(vertical = 4.dp),
                         inlineContent = inlineContent
@@ -880,7 +943,7 @@ fun DefaultCharacterBack(
                         withStyle(style = SpanStyle(fontWeight = FontWeight.Bold)) {
                             append("End Step Effect: ")
                         }
-                        append(parseAbilityDescription(character.signatureMove.endStepEffect!!))
+                        append(parseAbilityDescription(character.signatureMove.endStepEffect!!, searchQuery))
                     }
                     Text(
                         text = endStepText,
@@ -897,13 +960,14 @@ fun DefaultCharacterBack(
 @Composable
 fun MoonstoneCharacterBack(
     character: Character, 
+    searchQuery: String,
     onFlip: () -> Unit,
     onFlipPositioned: (LayoutCoordinates) -> Unit = {}
 ) {
     Column {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
             Text(
-                text = character.signatureMove.name,
+                text = highlightText(character.signatureMove.name, searchQuery),
                 style = MaterialTheme.typography.displayLarge.copy(fontSize = 28.sp),
                 color = MaterialTheme.colorScheme.primary
             )
@@ -956,7 +1020,7 @@ fun MoonstoneCharacterBack(
             Spacer(modifier = Modifier.height(16.dp))
             if (character.signatureMove.passiveEffect != null) {
                 Text(
-                    text = parseAbilityDescription(character.signatureMove.passiveEffect!!),
+                    text = parseAbilityDescription(character.signatureMove.passiveEffect!!, searchQuery),
                     style = MaterialTheme.typography.bodyMedium,
                     inlineContent = getMoonstoneInlineContent()
                 )
@@ -966,7 +1030,7 @@ fun MoonstoneCharacterBack(
                     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
                         append("End Step Effect: ")
                     }
-                    append(parseAbilityDescription(character.signatureMove.endStepEffect!!))
+                    append(parseAbilityDescription(character.signatureMove.endStepEffect!!, searchQuery))
                 }
                 Text(
                     text = text,
@@ -1017,6 +1081,7 @@ fun StatBox(label: String, value: String) {
 fun AbilityItem(
     name: String, 
     description: String, 
+    searchQuery: String,
     oncePerTurn: Boolean = false, 
     oncePerGame: Boolean = false,
     reloadable: Boolean = false
@@ -1024,7 +1089,8 @@ fun AbilityItem(
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         val title = buildAnnotatedString {
             withStyle(style = SpanStyle(fontWeight = FontWeight.Bold)) {
-                append("$name: ")
+                appendWithHighlight(name, searchQuery)
+                append(": ")
             }
             if (oncePerTurn) {
                 withStyle(style = SpanStyle(fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)) {
@@ -1043,7 +1109,7 @@ fun AbilityItem(
         }
         Text(text = title, style = MaterialTheme.typography.bodyMedium)
         Text(
-            text = parseAbilityDescription(description),
+            text = parseAbilityDescription(description, searchQuery),
             style = MaterialTheme.typography.bodySmall,
             inlineContent = getMoonstoneInlineContent()
         )
@@ -1051,12 +1117,12 @@ fun AbilityItem(
 }
 
 @Composable
-fun parseAbilityDescription(description: String) = buildAnnotatedString {
+fun parseAbilityDescription(description: String, searchQuery: String) = buildAnnotatedString {
     val regex = "\\[([GBP])\\]([^\\s,.:;]*)|Catastrophe:|\\{Null\\}".toRegex()
     var lastIndex = 0
     
     regex.findAll(description).forEach { match ->
-        append(description.substring(lastIndex, match.range.first))
+        appendWithHighlight(description.substring(lastIndex, match.range.first), searchQuery)
         
         when {
             match.value == "Catastrophe:" -> {
@@ -1089,7 +1155,7 @@ fun parseAbilityDescription(description: String) = buildAnnotatedString {
         }
         lastIndex = match.range.last + 1
     }
-    append(description.substring(lastIndex))
+    appendWithHighlight(description.substring(lastIndex), searchQuery)
 }
 
 @Composable

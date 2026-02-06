@@ -8,15 +8,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,3 +69,28 @@ fun getMoonstoneInlineContent() = mapOf(
         NullSymbol(size = 14.dp, modifier = Modifier.padding(horizontal = 2.dp))
     }
 )
+
+fun highlightText(text: String, searchQuery: String): AnnotatedString = buildAnnotatedString {
+    appendWithHighlight(text, searchQuery)
+}
+
+fun AnnotatedString.Builder.appendWithHighlight(text: String, searchQuery: String) {
+    if (searchQuery.isEmpty() || !text.contains(searchQuery, ignoreCase = true)) {
+        append(text)
+        return
+    }
+
+    val pattern = Regex.escape(searchQuery).toRegex(RegexOption.IGNORE_CASE)
+    var lastIndex = 0
+    pattern.findAll(text).forEach { match ->
+        append(text.substring(lastIndex, match.range.first))
+        withStyle(style = SpanStyle(
+            background = Color.Yellow.copy(alpha = 0.3f),
+            fontWeight = FontWeight.Bold
+        )) {
+            append(match.value)
+        }
+        lastIndex = match.range.last + 1
+    }
+    append(text.substring(lastIndex))
+}

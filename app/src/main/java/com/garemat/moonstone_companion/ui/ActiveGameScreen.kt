@@ -435,7 +435,7 @@ fun AbilityItemPlay(
             }
         }
         Text(
-            text = parseAbilityDescription(description),
+            text = parseAbilityDescription(description, ""),
             style = MaterialTheme.typography.bodySmall,
             inlineContent = inlineContent
         )
@@ -606,5 +606,81 @@ fun DefenseModifiersDisplay(character: Character) {
     } else {
         // Empty placeholder to maintain height
         Spacer(modifier = Modifier.height(14.dp))
+    }
+}
+
+@Composable
+fun CharacterBack(character: Character, onFlip: () -> Unit) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = character.signatureMove.name,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            IconButton(onClick = onFlip) {
+                Icon(Icons.Default.Refresh, contentDescription = "Flip Back")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (character.signatureMove.damageType != null) {
+            Text(
+                text = "Damage Type: ${character.signatureMove.damageType}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Signature Results Table
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Opponent Plays:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("Deal", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            character.signatureMove.results.forEach { entry ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = entry.opponentPlay, style = MaterialTheme.typography.bodyMedium)
+                    SignatureResultDisplay(entry)
+                }
+            }
+        }
+
+        if (character.signatureMove.passiveEffect != null || character.signatureMove.endStepEffect != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            val inlineContent = getMoonstoneInlineContent()
+            if (character.signatureMove.passiveEffect != null) {
+                Text(
+                    text = parseAbilityDescription(character.signatureMove.passiveEffect!!, ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    inlineContent = inlineContent
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+            if (character.signatureMove.endStepEffect != null) {
+                val endStepText = buildAnnotatedString {
+                    withStyle(style = SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append("End Step Effect: ")
+                    }
+                    append(parseAbilityDescription(character.signatureMove.endStepEffect!!, ""))
+                }
+                Text(
+                    text = endStepText,
+                    style = MaterialTheme.typography.bodySmall,
+                    inlineContent = inlineContent
+                )
+            }
+        }
     }
 }

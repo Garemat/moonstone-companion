@@ -1,14 +1,11 @@
 package com.garemat.moonstone_companion.ui
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -16,12 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -154,12 +147,15 @@ fun RuleItem(rule: RuleSection, searchQuery: String) {
     var isExpanded by remember { mutableStateOf(false) }
 
     // Auto-expand if search query matches content or title to help user find the term
+    // Re-collapse when search is cleared
     LaunchedEffect(searchQuery) {
-        if (searchQuery.isNotEmpty() && (
-            rule.title.contains(searchQuery, ignoreCase = true) ||
-            rule.content.contains(searchQuery, ignoreCase = true)
-        )) {
-            isExpanded = true
+        if (searchQuery.isNotEmpty()) {
+            if (rule.title.contains(searchQuery, ignoreCase = true) ||
+                rule.content.contains(searchQuery, ignoreCase = true)) {
+                isExpanded = true
+            }
+        } else {
+            isExpanded = false
         }
     }
 
@@ -222,11 +218,6 @@ fun RuleItem(rule: RuleSection, searchQuery: String) {
 }
 
 @Composable
-fun highlightText(text: String, searchQuery: String): AnnotatedString = buildAnnotatedString {
-    appendWithHighlight(text, searchQuery)
-}
-
-@Composable
 fun parseRuleContent(content: String, searchQuery: String, accentColor: Color) = buildAnnotatedString {
     val lines = content.split("\n")
     lines.forEachIndexed { index, line ->
@@ -256,7 +247,7 @@ fun parseRuleContent(content: String, searchQuery: String, accentColor: Color) =
 }
 
 private fun AnnotatedString.Builder.appendFormattedPart(text: String, searchQuery: String) {
-    val regex = """(\*\*(.*?)\*\*)|(\{[Nn]ull\})""".toRegex()
+    val regex = "(\\*\\*(.*?)\\*\\*)|(\\{[Nn]ull\\})".toRegex()
     var lastIndex = 0
     
     regex.findAll(text).forEach { match ->
@@ -276,25 +267,4 @@ private fun AnnotatedString.Builder.appendFormattedPart(text: String, searchQuer
         lastIndex = match.range.last + 1
     }
     appendWithHighlight(text.substring(lastIndex), searchQuery)
-}
-
-private fun AnnotatedString.Builder.appendWithHighlight(text: String, searchQuery: String) {
-    if (searchQuery.isEmpty() || !text.contains(searchQuery, ignoreCase = true)) {
-        append(text)
-        return
-    }
-
-    val pattern = Regex.escape(searchQuery).toRegex(RegexOption.IGNORE_CASE)
-    var lastIndex = 0
-    pattern.findAll(text).forEach { match ->
-        append(text.substring(lastIndex, match.range.first))
-        withStyle(style = SpanStyle(
-            background = Color.Yellow.copy(alpha = 0.3f),
-            fontWeight = FontWeight.Bold
-        )) {
-            append(match.value)
-        }
-        lastIndex = match.range.last + 1
-    }
-    append(text.substring(lastIndex))
 }
