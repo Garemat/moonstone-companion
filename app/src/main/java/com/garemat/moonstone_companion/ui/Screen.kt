@@ -8,6 +8,6 @@ sealed class Screen(val route: String) {
     data object AddEditTroupe : Screen("add_edit_troupe")
     data object GameSetup : Screen("game_setup")
     data object ActiveGame : Screen("active_game")
-    data object Profile : Screen("profile")
+    data object Settings : Screen("settings")
     data object Rules : Screen("rules")
 }

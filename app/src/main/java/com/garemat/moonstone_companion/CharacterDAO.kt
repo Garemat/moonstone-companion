@@ -24,7 +24,7 @@ interface CharacterDAO {
 
     // Troupe Operations
     @Upsert
-    suspend fun upsertTroupe(troupe: Troupe)
+    suspend fun upsertTroupe(troupe: Troupe): Long
 
     @Delete
     suspend fun deleteTroupe(troupe: Troupe)

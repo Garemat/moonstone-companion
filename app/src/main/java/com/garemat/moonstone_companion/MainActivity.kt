@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -40,9 +41,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MoonstonecompanionTheme {
+            val state by viewModel.state.collectAsState()
+            
+            MoonstonecompanionTheme(appTheme = state.theme) {
                 val navController = rememberNavController()
-                val state by viewModel.state.collectAsState()
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     NavHost(
@@ -52,39 +54,42 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable(Screen.Home.route) {
                             HomeScreen(
+                                state = state,
+                                onEvent = viewModel::onEvent,
                                 onNavigateToCharacters = { navController.navigate(Screen.Characters.route) },
                                 onNavigateToTroupes = { navController.navigate(Screen.Troupes.route) },
                                 onNavigateToRules = { navController.navigate(Screen.Rules.route) },
                                 onNavigateToGameSetup = { navController.navigate(Screen.GameSetup.route) },
-                                onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
+                                onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
                             )
                         }
-                        composable(Screen.Profile.route) {
-                            ProfileScreen(
+                        composable(Screen.Settings.route) {
+                            SettingsScreen(
                                 state = state,
                                 onEvent = viewModel::onEvent,
-                                onNavigateBack = { navController.popBackStack() }
+                                onNavigateBack = { navController.safePopBackStack() }
                             )
                         }
                         composable(Screen.Rules.route) {
                             RulesScreen(
-                                onNavigateBack = { navController.popBackStack() }
+                                viewModel = viewModel,
+                                onNavigateBack = { navController.safePopBackStack() }
                             )
                         }
                         composable(Screen.Characters.route) {
                             CharacterListScreen(
                                 state = state,
                                 onEvent = viewModel::onEvent,
-                                onNavigateBack = { navController.popBackStack() }
+                                onNavigateBack = { navController.safePopBackStack() }
                             )
                         }
                         composable(Screen.Troupes.route) {
                             TroupeListScreen(
                                 state = state,
                                 viewModel = viewModel,
-                                onNavigateBack = { navController.popBackStack() },
+                                onNavigateBack = { navController.safePopBackStack() },
                                 onAddTroupe = { 
-                                    viewModel.editingTroupeId = null
+                                    viewModel.editingTroupeId = null 
                                     navController.navigate(Screen.AddEditTroupe.route) 
                                 },
                                 onEditTroupe = { navController.navigate(Screen.AddEditTroupe.route) }
@@ -94,16 +99,19 @@ class MainActivity : ComponentActivity() {
                             AddEditTroupeScreen(
                                 viewModel = viewModel,
                                 state = state,
-                                onNavigateBack = { navController.popBackStack() }
+                                onNavigateBack = { navController.safePopBackStack() }
                             )
                         }
                         composable(Screen.GameSetup.route) {
                             GameSetupScreen(
                                 state = state,
                                 viewModel = viewModel,
-                                onNavigateBack = { navController.popBackStack() },
+                                onNavigateBack = { navController.safePopBackStack() },
                                 onStartGame = { 
                                     navController.navigate(Screen.ActiveGame.route)
+                                },
+                                onNavigateToAddEditTroupe = {
+                                    navController.navigate(Screen.AddEditTroupe.route)
                                 }
                             )
                         }
@@ -111,6 +119,8 @@ class MainActivity : ComponentActivity() {
                             val playersWithCharacters by viewModel.playersWithCharacters.collectAsState()
                             
                             ActiveGameScreen(
+                                state = state,
+                                viewModel = viewModel,
                                 players = playersWithCharacters,
                                 onQuitGame = { 
                                     navController.popBackStack(Screen.Home.route, inclusive = false)
@@ -121,5 +131,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+/**
+ * Extension function to prevent popping the root of the navigation stack,
+ * which results in a blank screen.
+ */
+fun NavController.safePopBackStack() {
+    if (previousBackStackEntry != null) {
+        popBackStack()
     }
 }

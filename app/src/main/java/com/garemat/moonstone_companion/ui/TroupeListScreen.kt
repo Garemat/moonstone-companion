@@ -16,15 +16,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.garemat.moonstone_companion.Character
 import com.garemat.moonstone_companion.CharacterEvent
 import com.garemat.moonstone_companion.CharacterState
 import com.garemat.moonstone_companion.CharacterViewModel
 import com.garemat.moonstone_companion.Troupe
+import com.garemat.moonstone_companion.Faction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,130 +43,186 @@ fun TroupeListScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var importCode by remember { mutableStateOf("") }
     val context = LocalContext.current
+    
+    // Tutorial state
+    val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
+    var showTutorialForcefully by remember { mutableStateOf(false) }
+    val shouldShowTutorial = (!state.hasSeenTroupesTutorial || showTutorialForcefully)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("My Troupes") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showImportDialog = true }) {
-                        Icon(Icons.Default.Input, contentDescription = "Import Troupe")
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onAddTroupe) {
-                Icon(Icons.Default.Add, contentDescription = "Create Troupe")
-            }
-        }
-    ) { padding ->
-        if (state.troupes.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("No troupes yet. Create or import one!")
-            }
-        } else {
-            LazyColumn(
-                contentPadding = padding,
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(state.troupes) { troupe ->
-                    TroupeListItem(
-                        troupe = troupe,
-                        onClick = { 
-                            viewModel.onEvent(CharacterEvent.EditTroupe(troupe))
-                            onEditTroupe()
-                        },
-                        onDelete = { troupeToDelete = troupe },
-                        onShare = { 
-                            val fullCode = viewModel.generateFullShareCode(troupe, state.characters)
-                            shareTroupe(context, troupe.troupeName, fullCode)
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("My Troupes") },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                         }
-                    )
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = { showImportDialog = true },
+                            modifier = Modifier.onGloballyPositioned { coordsMap["ImportTroupe"] = it }
+                        ) {
+                            Icon(Icons.Default.Input, contentDescription = "Import Troupe")
+                        }
+                    }
+                )
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = onAddTroupe,
+                    modifier = Modifier.onGloballyPositioned { coordsMap["AddTroupe"] = it }
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Create Troupe")
                 }
             }
-        }
+        ) { padding ->
+            val troupesToShow = if (shouldShowTutorial && state.troupes.isEmpty()) {
+                listOf(Troupe(id = -1, troupeName = "Example Troupe name", faction = Faction.COMMONWEALTH, characterIds = List(6) { 0 }, shareCode = ""))
+            } else {
+                state.troupes
+            }
 
-        if (troupeToDelete != null) {
-            AlertDialog(
-                onDismissRequest = { troupeToDelete = null },
-                title = { Text("Delete Troupe") },
-                text = { Text("Are you sure you want to delete '${troupeToDelete?.troupeName}'?") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            troupeToDelete?.let { viewModel.onEvent(CharacterEvent.DeleteTroupe(it)) }
-                            troupeToDelete = null
-                        },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Delete")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { troupeToDelete = null }) {
-                        Text("Cancel")
-                    }
+            if (troupesToShow.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    Text("No troupes yet. Create or import one!")
                 }
-            )
-        }
-
-        if (showImportDialog) {
-            AlertDialog(
-                onDismissRequest = { showImportDialog = false },
-                title = { Text("Import Troupe") },
-                text = {
-                    Column {
-                        Text("Paste the shared troupe code below:")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = importCode,
-                            onValueChange = { importCode = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Paste code here") }
+            } else {
+                LazyColumn(
+                    contentPadding = padding,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onGloballyPositioned { coordsMap["TroupeList"] = it },
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(troupesToShow) { troupe ->
+                        TroupeListItem(
+                            troupe = troupe,
+                            onClick = { 
+                                if (troupe.id != -1) {
+                                    viewModel.onEvent(CharacterEvent.EditTroupe(troupe))
+                                    onEditTroupe()
+                                }
+                            },
+                            onDelete = { if (troupe.id != -1) troupeToDelete = troupe },
+                            onShare = { 
+                                if (troupe.id != -1) {
+                                    val fullCode = viewModel.generateFullShareCode(troupe, state.characters)
+                                    shareTroupe(context, troupe.troupeName, fullCode)
+                                }
+                            },
+                            onPositioned = { name, coords -> coordsMap[name] = coords }
                         )
                     }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            viewModel.importTroupe(importCode, state.characters)
-                            if (viewModel.state.value.errorMessage == null) {
-                                showImportDialog = false
-                                importCode = ""
-                                onAddTroupe()
-                            }
-                        },
-                        enabled = importCode.isNotBlank()
-                    ) {
-                        Text("Import")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showImportDialog = false }) {
-                        Text("Cancel")
-                    }
                 }
-            )
+            }
+            
+            // Delete Dialog
+            if (troupeToDelete != null) {
+                AlertDialog(
+                    onDismissRequest = { troupeToDelete = null },
+                    title = { Text("Delete Troupe") },
+                    text = { Text("Are you sure you want to delete '${troupeToDelete?.troupeName}'?") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                troupeToDelete?.let { viewModel.onEvent(CharacterEvent.DeleteTroupe(it)) }
+                                troupeToDelete = null
+                            },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("Delete")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { troupeToDelete = null }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            // Import Dialog
+            if (showImportDialog) {
+                AlertDialog(
+                    onDismissRequest = { showImportDialog = false },
+                    title = { Text("Import Troupe") },
+                    text = {
+                        Column {
+                            Text("Paste the shared troupe code below:")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = importCode,
+                                onValueChange = { importCode = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = { Text("Paste code here") }
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                viewModel.importTroupe(importCode, state.characters)
+                                if (viewModel.state.value.errorMessage == null) {
+                                    showImportDialog = false
+                                    importCode = ""
+                                    onAddTroupe() // Navigate to editor with imported data
+                                }
+                            },
+                            enabled = importCode.isNotBlank()
+                        ) {
+                            Text("Import")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showImportDialog = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            // Error Dialog
+            if (state.errorMessage != null) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.onEvent(CharacterEvent.DismissError) },
+                    title = { Text("Import Failed") },
+                    text = { Text(state.errorMessage) },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.onEvent(CharacterEvent.DismissError) }) {
+                            Text("OK")
+                        }
+                    }
+                )
+            }
         }
 
-        if (state.errorMessage != null) {
-            AlertDialog(
-                onDismissRequest = { viewModel.onEvent(CharacterEvent.DismissError) },
-                title = { Text("Import Failed") },
-                text = { Text(state.errorMessage) },
-                confirmButton = {
-                    TextButton(onClick = { viewModel.onEvent(CharacterEvent.DismissError) }) {
-                        Text("OK")
+        // Help button in top left - Aligned with HomeScreen
+        IconButton(
+            onClick = { showTutorialForcefully = true },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Default.Help, contentDescription = "Tutorial")
+        }
+
+        if (shouldShowTutorial) {
+            Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
+                TutorialOverlay(
+                    steps = troupesScreenTutorialSteps,
+                    targetCoordinates = coordsMap,
+                    onComplete = {
+                        viewModel.onEvent(CharacterEvent.SetHasSeenTutorial("troupes", true))
+                        showTutorialForcefully = false
+                    },
+                    onSkip = {
+                        viewModel.onEvent(CharacterEvent.SetHasSeenTutorial("troupes", true))
+                        showTutorialForcefully = false
                     }
-                }
-            )
+                )
+            }
         }
     }
 }
@@ -172,13 +232,17 @@ fun TroupeListItem(
     troupe: Troupe,
     onClick: () -> Unit,
     onDelete: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onPositioned: (String, LayoutCoordinates) -> Unit = { _, _ -> }
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable { onClick() }
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -189,12 +253,12 @@ fun TroupeListItem(
                     .size(40.dp)
                     .clip(CircleShape)
                     .background(getFactionColor(troupe.faction))
-                    .padding(8.dp),
+                    .padding(4.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = getFactionIcon(troupe.faction),
-                    contentDescription = null,
+                FactionSymbol(
+                    faction = troupe.faction,
+                    modifier = Modifier.size(24.dp),
                     tint = Color.White
                 )
             }
@@ -214,11 +278,17 @@ fun TroupeListItem(
                 )
             }
 
-            IconButton(onClick = onShare) {
+            IconButton(
+                onClick = onShare,
+                modifier = Modifier.onGloballyPositioned { onPositioned("ShareTroupe", it) }
+            ) {
                 Icon(Icons.Default.Share, contentDescription = "Share Code")
             }
             
-            IconButton(onClick = onDelete) {
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.onGloballyPositioned { onPositioned("DeleteTroupe", it) }
+            ) {
                 Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
             }
         }

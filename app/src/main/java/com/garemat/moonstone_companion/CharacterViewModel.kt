@@ -1,6 +1,7 @@
 package com.garemat.moonstone_companion
 
 import android.app.Application
+import android.content.Context
 import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -9,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import java.util.UUID
 
 class CharacterViewModel(
@@ -16,18 +18,41 @@ class CharacterViewModel(
     private val dao: CharacterDAO
 ) : AndroidViewModel(application) {
 
+    private val prefs = application.getSharedPreferences("moonstone_prefs", Context.MODE_PRIVATE)
     private val nearbyManager = NearbyManager(application)
 
-    private val _state = MutableStateFlow(CharacterState())
+    // Persistent Unique Device ID for session rejoin
+    private val persistentDeviceId: String = prefs.getString("persistent_device_id", null) ?: run {
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("persistent_device_id", newId).apply()
+        newId
+    }
+
+    private val _state = MutableStateFlow(CharacterState(
+        name = prefs.getString("player_name", "") ?: "",
+        deviceId = persistentDeviceId,
+        theme = AppTheme.valueOf(prefs.getString("app_theme", AppTheme.DEFAULT.name) ?: AppTheme.DEFAULT.name),
+        hasSeenHomeTutorial = prefs.getBoolean("has_seen_home_tutorial", false),
+        hasSeenTroupesTutorial = prefs.getBoolean("has_seen_troupes_tutorial", false),
+        hasSeenCharactersTutorial = prefs.getBoolean("has_seen_characters_tutorial", false),
+        hasSeenRulesTutorial = prefs.getBoolean("has_seen_rules_tutorial", false),
+        hasSeenSettingsTutorial = prefs.getBoolean("has_seen_settings_tutorial", false),
+        hasSeenGameSetupTutorial = prefs.getBoolean("has_seen_game_setup_tutorial", false)
+    ))
+    
     private val _characters = dao.getCharactersOrderedByName()
     private val _troupes = dao.getTroupes()
+
+    // Rules logic
+    private val _rules = MutableStateFlow<List<RuleSection>>(emptyList())
+    val rules = _rules.asStateFlow()
 
     val state = combine(_state, _characters, _troupes) { state, characters, troupes ->
         state.copy(
             characters = characters,
             troupes = troupes
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CharacterState())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), _state.value)
 
     val discoveredEndpoints = nearbyManager.discoveredEndpoints
 
@@ -39,9 +64,11 @@ class CharacterViewModel(
 
     sealed class UiEvent {
         data object GameStarted : UiEvent()
+        data class TroupeCreated(val troupe: Troupe, val playerIndex: Int?) : UiEvent()
     }
 
     init {
+        loadRules()
         nearbyManager.setPayloadListener { endpointId, message ->
             handleSessionMessage(endpointId, message)
         }
@@ -49,8 +76,23 @@ class CharacterViewModel(
         nearbyManager.setConnectionListener { endpointId ->
             val currentSession = _state.value.gameSession
             if (currentSession == null || !currentSession.isHost) {
-                val joinMsg = SessionMessage.JoinRequest(_state.value.name.ifEmpty { "Player" })
+                val joinMsg = SessionMessage.JoinRequest(
+                    playerName = _state.value.name.ifEmpty { "Player" },
+                    deviceId = persistentDeviceId
+                )
                 nearbyManager.sendPayload(endpointId, MessageParser.encode(joinMsg))
+            }
+        }
+    }
+
+    private fun loadRules() {
+        viewModelScope.launch {
+            try {
+                val jsonString = getApplication<Application>().assets.open("rules.json").bufferedReader().use { it.readText() }
+                val loadedRules = Json.decodeFromString<List<RuleSection>>(jsonString)
+                _rules.value = loadedRules
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
@@ -60,6 +102,8 @@ class CharacterViewModel(
     var newTroupeName by mutableStateOf("")
     var selectedTroupeFaction by mutableStateOf(Faction.COMMONWEALTH)
     var selectedCharacterIds by mutableStateOf(setOf<Int>())
+    var autoSelectMembers by mutableStateOf(false)
+    var pendingTroupePlayerIndex by mutableStateOf<Int?>(null)
 
     // Active Game State
     private val _activeTroupes = MutableStateFlow<List<Troupe>>(emptyList())
@@ -70,7 +114,40 @@ class CharacterViewModel(
         val flows = troupes.map { troupe ->
             dao.getCharactersByIds(troupe.characterIds).map { troupe to it }
         }
-        combine(flows) { it.toList() }
+        combine(flows) { troupePairs ->
+            troupePairs.toList().map { (troupe, characters) ->
+                // Character summmons logic:
+                // Find any characters in the troupe that have 'summonsCharacterIds'
+                val summonIds = characters.flatMap { it.summonsCharacterIds }
+                if (summonIds.isNotEmpty()) {
+                    // Fetch summoned characters but exclude those already present in the troupe
+                    val allCharacters = state.value.characters
+                    val currentIdsInTroupe = characters.map { it.id }.toSet()
+                    
+                    val summonedCharacters = summonIds.filter { sId ->
+                        // Only add as a summon if they aren't already manually selected in the troupe
+                        !currentIdsInTroupe.contains(sId)
+                    }.mapNotNull { sId ->
+                        allCharacters.find { it.id == sId }
+                    }
+                    
+                    troupe to (characters + summonedCharacters)
+                } else {
+                    troupe to characters
+                }
+            }
+        }
+    }.onEach { players ->
+        // When characters are loaded for a new game, initialize their play states if not already done
+        if (players.isNotEmpty() && _state.value.characterPlayStates.isEmpty()) {
+            val initialStates = mutableMapOf<String, CharacterPlayState>()
+            players.forEachIndexed { pIdx, (_, characters) ->
+                characters.forEachIndexed { cIdx, character ->
+                    initialStates["${pIdx}_${cIdx}"] = CharacterPlayState(currentHealth = character.health)
+                }
+            }
+            _state.update { it.copy(characterPlayStates = initialStates) }
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun onEvent(event: CharacterEvent) {
@@ -83,6 +160,7 @@ class CharacterViewModel(
                 newTroupeName = event.troupe.troupeName
                 selectedTroupeFaction = event.troupe.faction
                 selectedCharacterIds = event.troupe.characterIds.toSet()
+                autoSelectMembers = event.troupe.autoSelectMembers
             }
             CharacterEvent.SaveTroupe -> {
                 val troupe = Troupe(
@@ -90,9 +168,15 @@ class CharacterViewModel(
                     troupeName = newTroupeName,
                     faction = selectedTroupeFaction,
                     characterIds = selectedCharacterIds.toList(),
-                    shareCode = ""
+                    shareCode = "",
+                    autoSelectMembers = autoSelectMembers
                 )
-                viewModelScope.launch { dao.upsertTroupe(troupe) }
+                viewModelScope.launch { 
+                    val id = dao.upsertTroupe(troupe)
+                    val savedTroupe = troupe.copy(id = id.toInt())
+                    _uiEvent.emit(UiEvent.TroupeCreated(savedTroupe, pendingTroupePlayerIndex))
+                    pendingTroupePlayerIndex = null
+                }
                 resetNewTroupeFields()
             }
             is CharacterEvent.SortCharacters -> {
@@ -103,12 +187,80 @@ class CharacterViewModel(
             }
             is CharacterEvent.UpdateUserName -> {
                 _state.update { it.copy(name = event.name) }
+                prefs.edit().putString("player_name", event.name).apply()
+            }
+            is CharacterEvent.ChangeTheme -> {
+                _state.update { it.copy(theme = event.theme) }
+                prefs.edit().putString("app_theme", event.theme.name).apply()
+            }
+            is CharacterEvent.SetHasSeenTutorial -> {
+                val prefKey = "has_seen_${event.tutorialKey}_tutorial"
+                _state.update { 
+                    when(event.tutorialKey) {
+                        "home" -> it.copy(hasSeenHomeTutorial = event.seen)
+                        "troupes" -> it.copy(hasSeenTroupesTutorial = event.seen)
+                        "characters" -> it.copy(hasSeenCharactersTutorial = event.seen)
+                        "rules" -> it.copy(hasSeenRulesTutorial = event.seen)
+                        "settings" -> it.copy(hasSeenSettingsTutorial = event.seen)
+                        "game_setup" -> it.copy(hasSeenGameSetupTutorial = event.seen)
+                        else -> it
+                    }
+                }
+                prefs.edit().putBoolean(prefKey, event.seen).apply()
+            }
+            
+            // Gameplay Events
+            is CharacterEvent.UpdateCharacterHealth -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(currentHealth = event.health) 
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, health = event.health))
+            }
+            is CharacterEvent.UpdateCharacterEnergy -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(currentEnergy = event.energy) 
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, energy = event.energy))
+            }
+            is CharacterEvent.ToggleAbilityUsed -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    val newAbilities = it.usedAbilities.toMutableMap()
+                    newAbilities[event.abilityName] = event.used
+                    it.copy(usedAbilities = newAbilities)
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, abilityName = event.abilityName, abilityUsed = event.used))
+            }
+            is CharacterEvent.ToggleCharacterFlipped -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(isFlipped = event.flipped) 
+                }
+                // Removed flip synchronization
+            }
+            is CharacterEvent.ToggleCharacterExpanded -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(isExpanded = event.expanded) 
+                }
+                // Removed expand synchronization
+            }
+            CharacterEvent.ResetGamePlayState -> {
+                _state.update { it.copy(characterPlayStates = emptyMap()) }
             }
             else -> {}
         }
     }
 
+    private fun updateCharacterState(playerIndex: Int, charIndex: Int, update: (CharacterPlayState) -> CharacterPlayState) {
+        val key = "${playerIndex}_$charIndex"
+        _state.update { currentState ->
+            val currentPlayStates = currentState.characterPlayStates.toMutableMap()
+            val charState = currentPlayStates[key] ?: CharacterPlayState(currentHealth = 0)
+            currentPlayStates[key] = update(charState)
+            currentState.copy(characterPlayStates = currentPlayStates)
+        }
+    }
+
     fun startNewGame(troupes: List<Troupe>) {
+        _state.update { it.copy(characterPlayStates = emptyMap()) } // Clear previous game state
         _activeTroupes.value = troupes
     }
 
@@ -129,6 +281,7 @@ class CharacterViewModel(
         newTroupeName = ""
         selectedTroupeFaction = Faction.COMMONWEALTH
         selectedCharacterIds = emptySet()
+        autoSelectMembers = false
     }
 
     fun generateFullShareCode(troupe: Troupe, characters: List<Character>): String {
@@ -141,7 +294,8 @@ class CharacterViewModel(
         val selectedCodes = troupe.characterIds.mapNotNull { id ->
             characters.find { it.id == id }?.shareCode
         }.joinToString("")
-        val rawCode = "${troupe.troupeName}|$factionCode$selectedCodes"
+        val autoSelectFlag = if (troupe.autoSelectMembers) "1" else "0"
+        val rawCode = "${troupe.troupeName}|$factionCode$autoSelectFlag$selectedCodes"
         return Base64.encodeToString(rawCode.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
     }
 
@@ -154,7 +308,6 @@ class CharacterViewModel(
             
             val name = parts[0]
             val codeBody = parts[1]
-            val characterCodes = codeBody.substring(1).chunked(3)
             val faction = when (codeBody[0]) {
                 'A' -> Faction.COMMONWEALTH
                 'B' -> Faction.DOMINION
@@ -162,16 +315,20 @@ class CharacterViewModel(
                 'D' -> Faction.SHADES
                 else -> return null
             }
+            val autoSelect = codeBody[1] == '1'
+            val characterCodes = codeBody.substring(2).chunked(3)
 
             val characterIds = characterCodes.mapNotNull { code ->
                 allCharacters.find { it.shareCode == code }?.id
             }
             
-            return Troupe(0, name, faction, characterIds, fullCode)
+            return Troupe(0, name, faction, characterIds, fullCode, autoSelectMembers = autoSelect)
         } catch (e: Exception) {
             return null
         }
     }
+
+    // --- Nearby Session Logic ---
 
     fun startHosting(hostName: String) {
         nearbyManager.stopAll()
@@ -179,7 +336,7 @@ class CharacterViewModel(
         val actualName = _state.value.name.ifEmpty { hostName }
         _state.update { it.copy(
             gameSession = GameSession(
-                players = listOf(GamePlayer(name = actualName, deviceId = "HOST")),
+                players = listOf(GamePlayer(name = actualName, deviceId = persistentDeviceId)),
                 isHost = true,
                 sessionId = sessionId
             )
@@ -211,12 +368,18 @@ class CharacterViewModel(
 
         when (message) {
             is SessionMessage.JoinRequest -> {
-                if (currentSession.isHost && currentSession.players.size < 4) {
-                    val newPlayer = GamePlayer(name = message.playerName, deviceId = endpointId)
-                    _state.update { it.copy(
-                        gameSession = currentSession.copy(players = currentSession.players + newPlayer)
-                    )}
-                    syncSessionToAll()
+                if (currentSession.isHost) {
+                    val existingPlayerIndex = currentSession.players.indexOfFirst { it.deviceId == message.deviceId }
+                    
+                    if (existingPlayerIndex != -1) {
+                        syncSessionToAll()
+                    } else if (currentSession.players.size < 4) {
+                        val newPlayer = GamePlayer(name = message.playerName, deviceId = message.deviceId)
+                        _state.update { it.copy(
+                            gameSession = currentSession.copy(players = currentSession.players + newPlayer)
+                        )}
+                        syncSessionToAll()
+                    }
                 }
             }
             is SessionMessage.SessionSync -> {
@@ -237,13 +400,8 @@ class CharacterViewModel(
                 )
                 
                 val updatedPlayers = currentSession.players.map { player ->
-                    val isTarget = if (currentSession.isHost) {
-                        player.deviceId == endpointId || (player.deviceId == "HOST" && message.deviceId == "HOST")
-                    } else {
-                        player.deviceId == message.deviceId
-                    }
-                    
-                    if (isTarget) {
+                    // Match based on persistent deviceId
+                    if (player.deviceId == message.deviceId) {
                         player.copy(troupe = newTroupe)
                     } else player
                 }
@@ -254,6 +412,25 @@ class CharacterViewModel(
                 val troupes = currentSession.players.mapNotNull { it.troupe }
                 startNewGame(troupes)
                 viewModelScope.launch { _uiEvent.emit(UiEvent.GameStarted) }
+            }
+            is SessionMessage.GameplayUpdate -> {
+                updateCharacterState(message.playerIndex, message.charIndex) { currentState ->
+                    var newState = currentState
+                    message.health?.let { newState = newState.copy(currentHealth = it) }
+                    message.energy?.let { newState = newState.copy(currentEnergy = it) }
+                    message.abilityName?.let { name ->
+                        message.abilityUsed?.let { used ->
+                            val newAbilities = newState.usedAbilities.toMutableMap()
+                            newAbilities[name] = used
+                            newState = newState.copy(usedAbilities = newAbilities)
+                        }
+                    }
+                    newState
+                }
+                // If host, rebroadcast to others
+                if (currentSession.isHost) {
+                    nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                }
             }
             else -> {}
         }
@@ -269,10 +446,9 @@ class CharacterViewModel(
 
     fun broadcastTroupeSelection(troupe: Troupe) {
         val session = _state.value.gameSession ?: return
-        val deviceId = if (session.isHost) "HOST" else "CLIENT" 
         
         val msg = SessionMessage.TroupeSelected(
-            deviceId = deviceId,
+            deviceId = persistentDeviceId,
             troupeName = troupe.troupeName,
             faction = troupe.faction,
             characterIds = troupe.characterIds
@@ -281,17 +457,23 @@ class CharacterViewModel(
         
         if (session.isHost) {
             val updatedPlayers = session.players.map { 
-                if (it.deviceId == "HOST") it.copy(troupe = troupe) else it 
+                if (it.deviceId == persistentDeviceId) it.copy(troupe = troupe) else it 
             }
             _state.update { it.copy(gameSession = session.copy(players = updatedPlayers)) }
             nearbyManager.sendPayloadToAll(json)
         } else {
+            // Locally update client state immediately for responsiveness
             val updatedPlayers = session.players.map { 
-                if (it.name == state.value.name || it.name == _state.value.name) it.copy(troupe = troupe) else it
+                if (it.deviceId == persistentDeviceId) it.copy(troupe = troupe) else it
             }
             _state.update { it.copy(gameSession = session.copy(players = updatedPlayers)) }
             nearbyManager.sendPayloadToAll(json) 
         }
+    }
+
+    fun broadcastGameplayUpdate(update: SessionMessage.GameplayUpdate) {
+        val session = _state.value.gameSession ?: return
+        nearbyManager.sendPayloadToAll(MessageParser.encode(update))
     }
 
     fun broadcastStartGame() {

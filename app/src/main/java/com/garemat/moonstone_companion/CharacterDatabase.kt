@@ -36,11 +36,13 @@ abstract class CharacterDatabase : RoomDatabase() {
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
+                        // Trigger immediate import on creation
                         prepopulate(context)
                     }
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)
+                        // Also ensure sync on open
                         prepopulate(context)
                     }
                 })

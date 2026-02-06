@@ -16,7 +16,7 @@ class NearbyManager(private val context: Context) {
     private val _connectedEndpoints = MutableStateFlow<Set<String>>(emptySet())
     val connectedEndpoints = _connectedEndpoints.asStateFlow()
 
-    private val _discoveredEndpoints = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val _discoveredEndpoints = MutableStateFlow<Map<String, String>>(emptyMap()) // endpointId -> name
     val discoveredEndpoints = _discoveredEndpoints.asStateFlow()
 
     private var onPayloadReceived: ((String, String) -> Unit)? = null
@@ -32,6 +32,7 @@ class NearbyManager(private val context: Context) {
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
+            // Automatically accept the connection on both sides.
             connectionsClient.acceptConnection(endpointId, payloadCallback)
         }
 
@@ -71,7 +72,11 @@ class NearbyManager(private val context: Context) {
 
     fun startAdvertising(localName: String) {
         connectionsClient.stopAdvertising()
-        val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
+        val options = AdvertisingOptions.Builder()
+            .setStrategy(STRATEGY)
+            .setDisruptiveUpgrade(false) // Prevents Wi-Fi Hotspot switching
+            .build()
+            
         connectionsClient.startAdvertising(localName, SERVICE_ID, connectionLifecycleCallback, options)
             .addOnFailureListener { Log.e("Nearby", "Advertising failed", it) }
     }
@@ -79,7 +84,11 @@ class NearbyManager(private val context: Context) {
     fun startDiscovery() {
         connectionsClient.stopDiscovery()
         _discoveredEndpoints.value = emptyMap()
-        val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
+        // Focus on discovery and maintain low-bandwidth reliable connection
+        val options = DiscoveryOptions.Builder()
+            .setStrategy(STRATEGY)
+            .build()
+
         connectionsClient.startDiscovery(SERVICE_ID, object : EndpointDiscoveryCallback() {
             override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
                 _discoveredEndpoints.update { it + (endpointId to info.endpointName) }
