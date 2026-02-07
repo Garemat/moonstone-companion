@@ -9,7 +9,10 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -33,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.garemat.moonstone_companion.*
+import com.garemat.moonstone_companion.ui.theme.LocalAppTheme
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,7 +48,9 @@ fun ActiveGameScreen(
     players: List<Pair<Troupe, List<Character>>>,
     onQuitGame: () -> Unit
 ) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(pageCount = { players.size })
+    val scope = rememberCoroutineScope()
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     
     // Drag and Drop State
     var draggingStoneSource by remember { mutableStateOf<StoneSource?>(null) }
@@ -58,37 +65,127 @@ fun ActiveGameScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { 
-                    Column {
-                        Text("Active Game")
-                        Text(
-                            text = if (state.currentTurn > 4) "Round: Sudden Death" else "Round: ${state.currentTurn}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onQuitGame) {
-                        Icon(Icons.Default.Close, contentDescription = "End Game")
+            Column(modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { viewModel.onEvent(CharacterEvent.RewindTurn) },
+                                enabled = state.turnHistory.isNotEmpty()
+                            ) {
+                                Icon(
+                                    Icons.Default.History, 
+                                    contentDescription = "Rewind Turn",
+                                    tint = if (state.turnHistory.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                )
+                            }
+                            
+                            Text(
+                                text = if (state.currentTurn > 4) "Round: Sudden Death" else "Round: " + state.currentTurn,
+                                style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+
+                            IconButton(
+                                onClick = { viewModel.onEvent(CharacterEvent.NextTurn) }
+                            ) {
+                                Icon(
+                                    Icons.Default.SkipNext, 
+                                    contentDescription = "Next Turn",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = onQuitGame) {
+                            Icon(Icons.Default.Close, contentDescription = "End Game")
+                        }
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = Color.Transparent
+                    )
+                )
+                
+                if (players.size > 1) {
+                    ScrollableTabRow(
+                        selectedTabIndex = pagerState.currentPage,
+                        edgePadding = 16.dp,
+                        containerColor = Color.Transparent,
+                        divider = {}
+                    ) {
+                        players.forEachIndexed { index, (troupe, _) ->
+                            Tab(
+                                selected = pagerState.currentPage == index,
+                                onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                                text = { 
+                                    Text(
+                                        text = troupe.troupeName,
+                                        style = if (isMoonstone) MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold) else LocalTextStyle.current
+                                    ) 
+                                }
+                            )
+                        }
                     }
                 }
-            )
+            }
         },
         bottomBar = {
-            if (players.size > 1) {
-                ScrollableTabRow(
-                    selectedTabIndex = selectedTab,
-                    edgePadding = 16.dp,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+            val isLocalPlayer = remember(state.gameSession, pagerState.currentPage, state.deviceId) {
+                val session = state.gameSession
+                if (session == null) true
+                else session.players.getOrNull(pagerState.currentPage)?.deviceId == state.deviceId
+            }
+
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                tonalElevation = if (isMoonstone) 0.dp else 4.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    players.forEachIndexed { index, (troupe, _) ->
-                        Tab(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            text = { Text(troupe.troupeName) }
-                        )
+                    // Moonstone Pool
+                    Box(
+                        modifier = Modifier
+                            .size(60.dp)
+                            .onGloballyPositioned { potBounds.value = it.boundsInWindow() }
+                            .pointerInput(isLocalPlayer) {
+                                if (isLocalPlayer) {
+                                    detectDragGestures(
+                                        onDragStart = { offset ->
+                                            draggingStoneSource = StoneSource.Pot
+                                            dragPosition = (potBounds.value?.topLeft ?: Offset.Zero) + offset
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            dragPosition += dragAmount
+                                        },
+                                        onDragEnd = {
+                                            val dropTarget = characterBounds.entries.find { it.value.contains(dragPosition) }
+                                            if (dropTarget != null) {
+                                                val (pIdx, cIdx) = dropTarget.key.split("_").map { it.toInt() }
+                                                val currentState = stateRef.value.characterPlayStates[dropTarget.key]?.moonstones ?: 0
+                                                if (currentState < 7) {
+                                                    viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(pIdx, cIdx, currentState + 1))
+                                                }
+                                            }
+                                            draggingStoneSource = null
+                                        },
+                                        onDragCancel = { draggingStoneSource = null }
+                                    )
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            MoonstoneIcon(size = 32.dp, modifier = Modifier.alpha(if (isLocalPlayer) 1f else 0.3f))
+                            Text("POOL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+                        }
                     }
                 }
             }
@@ -99,161 +196,89 @@ fun ActiveGameScreen(
                 .fillMaxSize()
                 .onGloballyPositioned { rootLayoutCoordinates = it }
         ) {
-            val currentPair = players.getOrNull(selectedTab)
-            val isLocalPlayer = remember(state.gameSession, selectedTab, state.deviceId) {
-                val session = state.gameSession
-                if (session == null) true
-                else session.players.getOrNull(selectedTab)?.deviceId == state.deviceId
-            }
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize().padding(padding)
+            ) { pageIndex ->
+                val currentPair = players.getOrNull(pageIndex)
+                if (currentPair != null) {
+                    val characters = currentPair.second
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        itemsIndexed(characters) { charIndex, character ->
+                            val stateKey = "" + pageIndex + "_" + charIndex
+                            val playState = state.characterPlayStates[stateKey] ?: CharacterPlayState(currentHealth = character.health)
 
-            if (currentPair != null) {
-                val characters = currentPair.second
-                
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(bottom = 100.dp, top = 16.dp, start = 16.dp, end = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    itemsIndexed(characters) { charIndex, character ->
-                        val stateKey = "${selectedTab}_${charIndex}"
-                        val playState = state.characterPlayStates[stateKey] ?: CharacterPlayState(currentHealth = character.health)
-
-                        DisposableEffect(stateKey) {
-                            onDispose { characterBounds.remove(stateKey) }
-                        }
-
-                        Box(
-                            modifier = Modifier.onGloballyPositioned { 
-                                characterBounds[stateKey] = it.boundsInWindow()
+                            DisposableEffect(stateKey) {
+                                onDispose { characterBounds.remove(stateKey) }
                             }
-                        ) {
-                            CharacterGameCard(
-                                character = character,
-                                currentHealth = playState.currentHealth,
-                                currentEnergy = playState.currentEnergy,
-                                moonstones = playState.moonstones,
-                                isExpanded = playState.isExpanded,
-                                isFlipped = playState.isFlipped,
-                                usedAbilities = playState.usedAbilities,
-                                isEditable = isLocalPlayer,
-                                draggingStoneIndex = if (draggingStoneSource is StoneSource.Character && 
-                                    (draggingStoneSource as StoneSource.Character).playerIndex == selectedTab && 
-                                    (draggingStoneSource as StoneSource.Character).charIndex == charIndex) draggingStoneIndex else -1,
-                                onHealthChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterHealth(selectedTab, charIndex, it)) },
-                                onEnergyChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterEnergy(selectedTab, charIndex, it)) },
-                                onExpandToggle = { viewModel.onEvent(CharacterEvent.ToggleCharacterExpanded(selectedTab, charIndex, !playState.isExpanded)) },
-                                onFlippedChange = { viewModel.onEvent(CharacterEvent.ToggleCharacterFlipped(selectedTab, charIndex, it)) },
-                                onAbilityToggle = { abilityName, used ->
-                                    viewModel.onEvent(CharacterEvent.ToggleAbilityUsed(selectedTab, charIndex, abilityName, used))
-                                },
-                                onStoneDragStart = { index, globalPos ->
-                                    draggingStoneIndex = index
-                                    draggingStoneSource = StoneSource.Character(selectedTab, charIndex)
-                                    dragPosition = globalPos
-                                },
-                                onStoneDrag = { amount -> dragPosition += amount },
-                                onStoneDragEnd = {
-                                    val source = draggingStoneSource as? StoneSource.Character
-                                    if (source != null) {
-                                        val currentState = stateRef.value
-                                        
-                                        if (potBounds.value?.contains(dragPosition) == true) {
-                                            val sourceStones = currentState.characterPlayStates["${source.playerIndex}_${source.charIndex}"]?.moonstones ?: 0
-                                            if (sourceStones > 0) {
-                                                viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
-                                            }
-                                        } 
-                                        else {
-                                            val dropTarget = characterBounds.entries.find { it.value.contains(dragPosition) }
-                                            if (dropTarget != null) {
-                                                val (targetPIdx, targetCIdx) = dropTarget.key.split("_").map { it.toInt() }
-                                                if (targetPIdx != source.playerIndex || targetCIdx != source.charIndex) {
-                                                    val sourceStones = currentState.characterPlayStates["${source.playerIndex}_${source.charIndex}"]?.moonstones ?: 0
-                                                    val targetStones = currentState.characterPlayStates[dropTarget.key]?.moonstones ?: 0
-                                                    
-                                                    if (targetStones < 7) {
-                                                        viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
-                                                        viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(targetPIdx, targetCIdx, targetStones + 1))
+
+                            Box(
+                                modifier = Modifier.onGloballyPositioned { 
+                                    characterBounds[stateKey] = it.boundsInWindow()
+                                }
+                            ) {
+                                CharacterGameCard(
+                                    character = character,
+                                    currentHealth = playState.currentHealth,
+                                    currentEnergy = playState.currentEnergy,
+                                    moonstones = playState.moonstones,
+                                    isExpanded = playState.isExpanded,
+                                    isFlipped = playState.isFlipped,
+                                    usedAbilities = playState.usedAbilities,
+                                    isEditable = true, // We allow interaction on all tabs, or check deviceId if strict
+                                    draggingStoneIndex = if (draggingStoneSource is StoneSource.Character && 
+                                        (draggingStoneSource as StoneSource.Character).playerIndex == pageIndex && 
+                                        (draggingStoneSource as StoneSource.Character).charIndex == charIndex) draggingStoneIndex else -1,
+                                    onHealthChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterHealth(pageIndex, charIndex, it)) },
+                                    onEnergyChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterEnergy(pageIndex, charIndex, it)) },
+                                    onExpandToggle = { viewModel.onEvent(CharacterEvent.ToggleCharacterExpanded(pageIndex, charIndex, !playState.isExpanded)) },
+                                    onFlippedChange = { viewModel.onEvent(CharacterEvent.ToggleCharacterFlipped(pageIndex, charIndex, it)) },
+                                    onAbilityToggle = { abilityName, used ->
+                                        viewModel.onEvent(CharacterEvent.ToggleAbilityUsed(pageIndex, charIndex, abilityName, used))
+                                    },
+                                    onStoneDragStart = { index, globalPos ->
+                                        draggingStoneIndex = index
+                                        draggingStoneSource = StoneSource.Character(pageIndex, charIndex)
+                                        dragPosition = globalPos
+                                    },
+                                    onStoneDrag = { amount -> dragPosition += amount },
+                                    onStoneDragEnd = {
+                                        val source = draggingStoneSource as? StoneSource.Character
+                                        if (source != null) {
+                                            val currentState = stateRef.value
+                                            
+                                            if (potBounds.value?.contains(dragPosition) == true) {
+                                                val sourceStones = currentState.characterPlayStates["" + source.playerIndex + "_" + source.charIndex]?.moonstones ?: 0
+                                                if (sourceStones > 0) {
+                                                    viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
+                                                }
+                                            } 
+                                            else {
+                                                val dropTarget = characterBounds.entries.find { it.value.contains(dragPosition) }
+                                                if (dropTarget != null) {
+                                                    val (targetPIdx, targetCIdx) = dropTarget.key.split("_").map { it.toInt() }
+                                                    if (targetPIdx != source.playerIndex || targetCIdx != source.charIndex) {
+                                                        val sourceStones = currentState.characterPlayStates["" + source.playerIndex + "_" + source.charIndex]?.moonstones ?: 0
+                                                        val targetStones = currentState.characterPlayStates[dropTarget.key]?.moonstones ?: 0
+                                                        
+                                                        if (targetStones < 7) {
+                                                            viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
+                                                            viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(targetPIdx, targetCIdx, targetStones + 1))
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                    draggingStoneSource = null
-                                    draggingStoneIndex = -1
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Interactive Layer: Pot and Next Turn Button
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(padding)
-                    .padding(16.dp)
-                    .align(Alignment.BottomCenter)
-            ) {
-                // Moonstone Pot
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .size(60.dp)
-                        .onGloballyPositioned { potBounds.value = it.boundsInWindow() }
-                        .pointerInput(isLocalPlayer) {
-                            if (isLocalPlayer) {
-                                detectDragGestures(
-                                    onDragStart = { offset ->
-                                        draggingStoneSource = StoneSource.Pot
-                                        dragPosition = potBounds.value!!.topLeft + offset
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        dragPosition += dragAmount
-                                    },
-                                    onDragEnd = {
-                                        val dropTarget = characterBounds.entries.find { it.value.contains(dragPosition) }
-                                        if (dropTarget != null) {
-                                            val (pIdx, cIdx) = dropTarget.key.split("_").map { it.toInt() }
-                                            val currentState = stateRef.value.characterPlayStates[dropTarget.key]?.moonstones ?: 0
-                                            if (currentState < 7) {
-                                                viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(pIdx, cIdx, currentState + 1))
-                                            }
-                                        }
                                         draggingStoneSource = null
-                                    },
-                                    onDragCancel = { draggingStoneSource = null }
+                                        draggingStoneIndex = -1
+                                    }
                                 )
                             }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    MoonstoneIcon(size = 48.dp, modifier = Modifier.alpha(if (isLocalPlayer) 1f else 0.3f))
-                }
-
-                Row(
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Rewind Button
-                    if (state.turnHistory.isNotEmpty()) {
-                        FilledTonalIconButton(
-                            onClick = { viewModel.onEvent(CharacterEvent.RewindTurn) },
-                            enabled = isLocalPlayer
-                        ) {
-                            Icon(Icons.Default.History, contentDescription = "Rewind Turn")
                         }
-                    }
-
-                    // Next Turn Button
-                    Button(
-                        onClick = { viewModel.onEvent(CharacterEvent.NextTurn) },
-                        enabled = isLocalPlayer
-                    ) {
-                        Text("Next Turn")
-                        Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.padding(start = 4.dp))
                     }
                 }
             }
@@ -314,11 +339,13 @@ fun CharacterGameCard(
     val currentOnDragStart by rememberUpdatedState(onStoneDragStart)
     val currentOnDrag by rememberUpdatedState(onStoneDrag)
     val currentOnDragEnd by rememberUpdatedState(onStoneDragEnd)
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(),
+        shape = if (isMoonstone) RoundedCornerShape(0.dp) else CardDefaults.shape,
         colors = CardDefaults.cardColors(
             containerColor = if (currentHealth <= 0) Color.DarkGray else MaterialTheme.colorScheme.surfaceVariant
         )
@@ -363,7 +390,7 @@ fun CharacterGameCard(
                                 if (isEditable) {
                                     detectDragGestures(
                                         onDragStart = { offset ->
-                                            val globalPos = stoneCoords[i]?.boundsInWindow()?.topLeft?.plus(offset) ?: Offset.Zero
+                                            val globalPos = (stoneCoords[i]?.boundsInWindow()?.topLeft ?: Offset.Zero) + offset
                                             currentOnDragStart(i, globalPos)
                                         },
                                         onDrag = { change, dragAmount ->
@@ -398,6 +425,7 @@ fun FrontSide(
     onAbilityToggle: (String, Boolean) -> Unit,
     onFlip: () -> Unit
 ) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -407,8 +435,9 @@ fun FrontSide(
             Column(modifier = Modifier.weight(1f).clickable { onFlip() }.padding(start = 24.dp)) {
                 Text(
                     text = character.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
                 if (character.signatureMove.upgradeFrom.isNotEmpty()) {
                     Text(
@@ -440,7 +469,7 @@ fun FrontSide(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Top
                 ) {
-                    CommonStatBox("MELEE", "${character.melee} / ${character.meleeRange}\"", modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start)
+                    CommonStatBox("MELEE", character.melee.toString() + " / " + character.meleeRange + "\"", modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start)
                     CommonStatBox("ARCANE", character.arcane.toString(), modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally)
                     CommonStatBox("EVADE", character.evade, modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally)
                 }
@@ -471,7 +500,7 @@ fun FrontSide(
                         Icon(Icons.Default.Remove, contentDescription = "Use", modifier = Modifier.size(20.dp))
                     }
                     Text(
-                        text = "$currentEnergy",
+                        text = currentEnergy.toString(),
                         fontSize = 22.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = if (isEditable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
@@ -530,8 +559,8 @@ fun FrontSide(
             if (character.activeAbilities.isNotEmpty()) {
                 Text("ACTIVE ABILITIES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 character.activeAbilities.forEach { ability ->
-                    val rangeText = if (ability.range.isNotEmpty()) " ${ability.range}" else ""
-                    val header = "${ability.name} (${ability.cost})$rangeText"
+                    val rangeText = if (ability.range.isNotEmpty()) " " + ability.range else ""
+                    val header = ability.name + " (" + ability.cost + ")" + rangeText
                     CommonAbilityItem(
                         name = header, 
                         description = ability.description,
@@ -548,8 +577,8 @@ fun FrontSide(
             if (character.arcaneAbilities.isNotEmpty()) {
                 Text("ARCANE ABILITIES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 character.arcaneAbilities.forEach { ability ->
-                    val rangeText = if (ability.range.isNotEmpty()) " ${ability.range}" else ""
-                    val header = "${ability.name} (${ability.cost})$rangeText"
+                    val rangeText = if (ability.range.isNotEmpty()) " " + ability.range else ""
+                    val header = ability.name + " (" + ability.cost + ")" + rangeText
                     CommonAbilityItem(
                         name = header, 
                         description = ability.description,

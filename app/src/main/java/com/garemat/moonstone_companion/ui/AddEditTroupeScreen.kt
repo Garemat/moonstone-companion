@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.garemat.moonstone_companion.*
+import com.garemat.moonstone_companion.ui.theme.LocalAppTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +48,7 @@ fun AddEditTroupeScreen(
     var showSaveValidationDialog by remember { mutableStateOf(false) }
     var showTutorialForcefully by remember { mutableStateOf(false) }
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     
     LaunchedEffect(triggerTutorial) {
         if (triggerTutorial > 0) {
@@ -101,7 +103,8 @@ fun AddEditTroupeScreen(
                         onValueChange = { viewModel.newTroupeName = it },
                         label = { Text("Troupe Name") },
                         modifier = Modifier.fillMaxWidth().onGloballyPositioned { coordsMap["TroupeName"] = it },
-                        singleLine = true
+                        singleLine = true,
+                        shape = if (isMoonstone) RoundedCornerShape(0.dp) else OutlinedTextFieldDefaults.shape
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -154,7 +157,7 @@ fun AddEditTroupeScreen(
                             }
                         },
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp)
+                        shape = if (isMoonstone) RoundedCornerShape(0.dp) else RoundedCornerShape(12.dp)
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -175,7 +178,8 @@ fun AddEditTroupeScreen(
                                     label = { Text(tag) },
                                     leadingIcon = if (isSelected) {
                                         { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                    } else null
+                                    } else null,
+                                    shape = if (isMoonstone) RoundedCornerShape(0.dp) else FilterChipDefaults.shape
                                 )
                             }
                         }
@@ -248,6 +252,7 @@ fun AddEditTroupeScreen(
                 // Toggle Visibility
                 SmallFloatingActionButton(
                     onClick = { isHeaderVisible = !isHeaderVisible },
+                    shape = if (isMoonstone) RoundedCornerShape(0.dp) else FloatingActionButtonDefaults.smallShape,
                     modifier = Modifier.onGloballyPositioned { coordsMap["FilterButton"] = it }
                 ) {
                     Icon(
@@ -259,6 +264,7 @@ fun AddEditTroupeScreen(
                 // Settings
                 SmallFloatingActionButton(
                     onClick = { showSettingsDialog = true },
+                    shape = if (isMoonstone) RoundedCornerShape(0.dp) else FloatingActionButtonDefaults.smallShape,
                     modifier = Modifier.onGloballyPositioned { coordsMap["SettingsCog"] = it }
                 ) {
                     Icon(Icons.Default.Settings, contentDescription = "Troupe Settings")
@@ -274,6 +280,7 @@ fun AddEditTroupeScreen(
                             onNavigateBack()
                         }
                     },
+                    shape = if (isMoonstone) RoundedCornerShape(0.dp) else FloatingActionButtonDefaults.shape,
                     containerColor = if (viewModel.newTroupeName.isNotBlank() && viewModel.selectedCharacterIds.isNotEmpty())
                         MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.onGloballyPositioned { coordsMap["SaveButton"] = it }
@@ -304,6 +311,7 @@ fun AddEditTroupeScreen(
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
+            shape = if (isMoonstone) RoundedCornerShape(0.dp) else RoundedCornerShape(28.dp),
             title = { Text("Troupe Settings") },
             text = {
                 Column {
@@ -339,6 +347,7 @@ fun AddEditTroupeScreen(
         val count = viewModel.selectedCharacterIds.size
         AlertDialog(
             onDismissRequest = { showSaveValidationDialog = false },
+            shape = if (isMoonstone) RoundedCornerShape(0.dp) else RoundedCornerShape(28.dp),
             title = { Text("Save Troupe") },
             text = {
                 Column {
@@ -352,11 +361,14 @@ fun AddEditTroupeScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    viewModel.onEvent(CharacterEvent.SaveTroupe)
-                    showSaveValidationDialog = false
-                    onNavigateBack()
-                }) {
+                Button(
+                    onClick = {
+                        viewModel.onEvent(CharacterEvent.SaveTroupe)
+                        showSaveValidationDialog = false
+                        onNavigateBack()
+                    },
+                    shape = if (isMoonstone) RoundedCornerShape(0.dp) else ButtonDefaults.shape
+                ) {
                     Text("Save")
                 }
             },

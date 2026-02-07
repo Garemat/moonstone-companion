@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -132,8 +133,14 @@ class MainActivity : ComponentActivity() {
                                         style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.titleLarge
                                     ) },
                                     navigationIcon = {
-                                        IconButton(onClick = { triggerTutorial++ }) {
-                                            Icon(Icons.Default.Help, contentDescription = "Tutorial")
+                                        if (currentDestination?.route == Screen.AddEditTroupe.route) {
+                                            IconButton(onClick = { navController.safePopBackStack() }) {
+                                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Discard Changes")
+                                            }
+                                        } else {
+                                            IconButton(onClick = { triggerTutorial++ }) {
+                                                Icon(Icons.Default.Help, contentDescription = "Tutorial")
+                                            }
                                         }
                                     },
                                     actions = {
