@@ -108,7 +108,8 @@ class CharacterViewModel(
     // Active Game State
     private val _activeTroupes = MutableStateFlow<List<Troupe>>(emptyList())
     
-    val playersWithCharacters = _activeTroupes.flatMapLatest { troupes ->
+    val playersWithCharacters = state.flatMapLatest { currentState ->
+        val troupes = currentState.activeTroupes
         if (troupes.isEmpty()) return@flatMapLatest flowOf(emptyList<Pair<Troupe, List<Character>>>())
         
         val flows = troupes.map { troupe ->
@@ -121,7 +122,7 @@ class CharacterViewModel(
                 val summonIds = characters.flatMap { it.summonsCharacterIds }
                 if (summonIds.isNotEmpty()) {
                     // Fetch summoned characters but exclude those already present in the troupe
-                    val allCharacters = state.value.characters
+                    val allCharacters = currentState.characters
                     val currentIdsInTroupe = characters.map { it.id }.toSet()
                     
                     val summonedCharacters = summonIds.filter { sId ->
@@ -141,12 +142,16 @@ class CharacterViewModel(
         // When characters are loaded for a new game, initialize their play states if not already done
         if (players.isNotEmpty() && _state.value.characterPlayStates.isEmpty()) {
             val initialStates = mutableMapOf<String, CharacterPlayState>()
-            players.forEachIndexed { pIdx, (_, characters) ->
+            players.forEachIndexed { pIdx, (troupe, characters) ->
                 characters.forEachIndexed { cIdx, character ->
-                    initialStates["${pIdx}_${cIdx}"] = CharacterPlayState(currentHealth = character.health)
+                    val replenishedEnergy = calculateReplenishedEnergy(character, character.health)
+                    initialStates["${pIdx}_${cIdx}"] = CharacterPlayState(
+                        currentHealth = character.health,
+                        currentEnergy = replenishedEnergy
+                    )
                 }
             }
-            _state.update { it.copy(characterPlayStates = initialStates, currentTurn = 1) }
+            _state.update { it.copy(characterPlayStates = initialStates, currentTurn = 1, turnHistory = emptyList()) }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -241,17 +246,29 @@ class CharacterViewModel(
                 }
             }
             CharacterEvent.ResetGamePlayState -> {
-                _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1) }
+                _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1, turnHistory = emptyList()) }
             }
             CharacterEvent.NextTurn -> {
-                _state.update { it.copy(currentTurn = it.currentTurn + 1) }
-                broadcastTurnUpdate(_state.value.currentTurn)
+                handleNextTurn()
+            }
+            CharacterEvent.RewindTurn -> {
+                handleRewindTurn()
             }
             is CharacterEvent.UpdateCharacterMoonstones -> {
                 updateCharacterState(event.playerIndex, event.charIndex) { 
                     it.copy(moonstones = event.stones) 
                 }
                 broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, moonstones = event.stones))
+            }
+            CharacterEvent.AbandonGame -> {
+                _state.update { it.copy(
+                    activeTroupes = emptyList(),
+                    characterPlayStates = emptyMap(),
+                    currentTurn = 1,
+                    gameSession = null,
+                    turnHistory = emptyList()
+                )}
+                nearbyManager.stopAll()
             }
             else -> {}
         }
@@ -267,9 +284,90 @@ class CharacterViewModel(
         }
     }
 
+    private fun calculateReplenishedEnergy(character: Character, currentHealth: Int): Int {
+        if (currentHealth <= 0) return 0
+        // Find how many thresholds are met
+        val thresholdsMet = character.energyTrack.count { currentHealth >= it }
+        return thresholdsMet
+    }
+
+    private fun handleNextTurn() {
+        val currentState = _state.value
+        val playersData = playersWithCharacters.value
+        if (playersData.isEmpty()) return
+
+        // 1. Save current state to history
+        val updatedHistory = currentState.turnHistory + listOf(currentState.characterPlayStates)
+
+        // 2. Calculate new state with energy replenishment
+        val newPlayStates = currentState.characterPlayStates.toMutableMap()
+        playersData.forEachIndexed { pIdx, (_, characters) ->
+            characters.forEachIndexed { cIdx, character ->
+                val key = "${pIdx}_$cIdx"
+                val playState = newPlayStates[key]
+                if (playState != null && playState.currentHealth > 0) {
+                    val replenishedEnergy = calculateReplenishedEnergy(character, playState.currentHealth)
+                    newPlayStates[key] = playState.copy(
+                        currentEnergy = replenishedEnergy,
+                        usedAbilities = emptyMap() // Reset turn-based abilities if any (optional, usually abilities are turn-based)
+                    )
+                }
+            }
+        }
+
+        // 3. Update state
+        _state.update { it.copy(
+            characterPlayStates = newPlayStates,
+            currentTurn = it.currentTurn + 1,
+            turnHistory = updatedHistory
+        ) }
+
+        // 4. Sync
+        broadcastTurnUpdate(_state.value.currentTurn)
+        // Re-sync all play states to ensure everyone has the new energy values
+        newPlayStates.forEach { (key, playState) ->
+            val parts = key.split("_")
+            if (parts.size == 2) {
+                val pIdx = parts[0].toInt()
+                val cIdx = parts[1].toInt()
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(pIdx, cIdx, health = playState.currentHealth, energy = playState.currentEnergy, moonstones = playState.moonstones))
+            }
+        }
+    }
+
+    private fun handleRewindTurn() {
+        _state.update { currentState ->
+            if (currentState.turnHistory.isEmpty()) return@update currentState
+            
+            val previousStates = currentState.turnHistory.last()
+            val newHistory = currentState.turnHistory.dropLast(1)
+            
+            currentState.copy(
+                characterPlayStates = previousStates,
+                currentTurn = (currentState.currentTurn - 1).coerceAtLeast(1),
+                turnHistory = newHistory
+            )
+        }
+        
+        // Sync rewind to others
+        broadcastTurnUpdate(_state.value.currentTurn)
+        _state.value.characterPlayStates.forEach { (key, playState) ->
+            val parts = key.split("_")
+            if (parts.size == 2) {
+                val pIdx = parts[0].toInt()
+                val cIdx = parts[1].toInt()
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(pIdx, cIdx, health = playState.currentHealth, energy = playState.currentEnergy, moonstones = playState.moonstones))
+            }
+        }
+    }
+
     fun startNewGame(troupes: List<Troupe>) {
-        _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1) } // Clear previous game state
-        _activeTroupes.value = troupes
+        _state.update { it.copy(
+            characterPlayStates = emptyMap(), 
+            currentTurn = 1,
+            activeTroupes = troupes,
+            turnHistory = emptyList()
+        ) }
     }
 
     fun saveTroupe(troupe: Troupe) {
@@ -438,7 +536,7 @@ class CharacterViewModel(
                 }
                 // If host, rebroadcast to others
                 if (currentSession.isHost) {
-                    nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                    nearbyManager.sendPayload(endpointId, MessageParser.encode(message)) // Note: actually handleSessionMessage logic usually handles rebroadcast via sendPayloadToAll in specific cases, but let's be consistent with broadcaseGameplayUpdate
                 }
             }
             is SessionMessage.TurnUpdate -> {

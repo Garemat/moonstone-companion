@@ -31,7 +31,10 @@ data class CharacterState(
     // Active Game Play State
     val currentTurn: Int = 1,
     // Key: "playerIndex_characterIndex"
-    val characterPlayStates: Map<String, CharacterPlayState> = emptyMap()
+    val characterPlayStates: Map<String, CharacterPlayState> = emptyMap(),
+    val activeTroupes: List<Troupe> = emptyList(),
+    // History for rewind: List of (TurnNumber, characterPlayStates)
+    val turnHistory: List<Map<String, CharacterPlayState>> = emptyList()
 )
 
 @Serializable

@@ -19,16 +19,14 @@ import androidx.compose.ui.zIndex
 import com.garemat.moonstone_companion.*
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CharacterListScreen(
     state: CharacterState,
     onEvent: (CharacterEvent) -> Unit,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    triggerTutorial: Int = 0
 ) {
     var expandedCharacterIds by remember { mutableStateOf(setOf<Int>()) }
-    var lastBackPressTime by remember { mutableLongStateOf(0L) }
-    
     var searchQuery by remember { mutableStateOf("") }
     var selectedFactions by remember { mutableStateOf(setOf<Faction>()) }
     
@@ -62,6 +60,13 @@ fun CharacterListScreen(
 
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
     var showTutorialForcefully by remember { mutableStateOf(false) }
+
+    LaunchedEffect(triggerTutorial) {
+        if (triggerTutorial > 0) {
+            showTutorialForcefully = true
+        }
+    }
+
     val shouldShowTutorial = (!state.hasSeenCharactersTutorial || showTutorialForcefully)
     var tutorialStepIndex by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -86,109 +91,82 @@ fun CharacterListScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Character Compendium") },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastBackPressTime > 500) {
-                                onNavigateBack()
-                                lastBackPressTime = currentTime
-                            }
-                        }) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        IconButton(
-                            onClick = { showFilterBar = !showFilterBar },
-                            modifier = Modifier.onGloballyPositioned {
-                                coordsMap["FilterButtonOpen"] = it
-                                coordsMap["FilterButtonClose"] = it
-                            }
-                        ) {
-                            Icon(
-                                imageVector = if (showFilterBar) Icons.Default.FilterListOff else Icons.Default.FilterList,
-                                contentDescription = "Toggle Filters",
-                                tint = if (selectedFactions.isNotEmpty() || selectedTags.isNotEmpty() || searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                            )
-                        }
-                    }
-                )
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (showFilterBar) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    tonalElevation = 2.dp,
+                    shadowElevation = 4.dp
+                ) {
+                    CharacterFilterHeader(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        selectedFactions = selectedFactions,
+                        onFactionsChange = { selectedFactions = it },
+                        selectedTags = selectedTags,
+                        onTagsChange = { selectedTags = it },
+                        availableTags = availableTags,
+                        showCollapseAll = expandedCharacterIds.isNotEmpty(),
+                        onCollapseAll = { expandedCharacterIds = emptySet() },
+                        onClearAll = {
+                            searchQuery = ""
+                            selectedFactions = emptySet()
+                            selectedTags = emptySet()
+                            expandedCharacterIds = emptySet()
+                        },
+                        coordsMap = coordsMap
+                    )
+                }
             }
-        ) { padding ->
-            Column(modifier = Modifier.padding(padding)) {
-                if (showFilterBar) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        tonalElevation = 2.dp,
-                        shadowElevation = 4.dp
-                    ) {
-                        CharacterFilterHeader(
-                            searchQuery = searchQuery,
-                            onSearchQueryChange = { searchQuery = it },
-                            selectedFactions = selectedFactions,
-                            onFactionsChange = { selectedFactions = it },
-                            selectedTags = selectedTags,
-                            onTagsChange = { selectedTags = it },
-                            availableTags = availableTags,
-                            showCollapseAll = expandedCharacterIds.isNotEmpty(),
-                            onCollapseAll = { expandedCharacterIds = emptySet() },
-                            onClearAll = {
-                                searchQuery = ""
-                                selectedFactions = emptySet()
-                                selectedTags = emptySet()
-                                expandedCharacterIds = emptySet()
-                            },
-                            coordsMap = coordsMap
-                        )
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
+                state = listState
+            ) {
+                if (filteredCharacters.isEmpty()) {
+                    item {
+                        Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No characters match your search.", color = Color.Gray)
+                        }
                     }
                 }
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp),
-                    state = listState
-                ) {
-                    if (filteredCharacters.isEmpty()) {
-                        item {
-                            Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("No characters match your search.", color = Color.Gray)
+                items(filteredCharacters, key = { it.id }) { character ->
+                    val isFirst = filteredCharacters.firstOrNull()?.id == character.id
+                    CommonCharacterCard(
+                        character = character,
+                        searchQuery = searchQuery,
+                        isExpanded = expandedCharacterIds.contains(character.id),
+                        onExpandClick = {
+                            expandedCharacterIds = if (expandedCharacterIds.contains(character.id)) {
+                                expandedCharacterIds - character.id
+                            } else {
+                                expandedCharacterIds + character.id
                             }
-                        }
-                    }
-                    items(filteredCharacters, key = { it.id }) { character ->
-                        val isFirst = filteredCharacters.firstOrNull()?.id == character.id
-                        CommonCharacterCard(
-                            character = character,
-                            searchQuery = searchQuery,
-                            isExpanded = expandedCharacterIds.contains(character.id),
-                            onExpandClick = {
-                                expandedCharacterIds = if (expandedCharacterIds.contains(character.id)) {
-                                    expandedCharacterIds - character.id
-                                } else {
-                                    expandedCharacterIds + character.id
-                                }
-                            },
-                            cardTargetName = if (isFirst) "FirstCharacterCard" else "CharacterCard",
-                            onPositioned = { name, coords -> 
-                                if (isFirst || name == "FlipButton") coordsMap[name] = coords
-                            },
-                            forceFlipped = if (shouldShowTutorial && isFirst && expandedCharacterIds.contains(character.id) && tutorialStepIndex >= 8) true else null
-                        )
-                    }
+                        },
+                        cardTargetName = if (isFirst) "FirstCharacterCard" else "CharacterCard",
+                        onPositioned = { name, coords -> 
+                            if (isFirst || name == "FlipButton") coordsMap[name] = coords
+                        },
+                        forceFlipped = if (shouldShowTutorial && isFirst && expandedCharacterIds.contains(character.id) && tutorialStepIndex >= 8) true else null
+                    )
                 }
             }
         }
 
-        IconButton(
-            onClick = { showTutorialForcefully = true },
-            modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+        // Floating Action Button - Positioned manually to avoid Scaffold padding
+        FloatingActionButton(
+            onClick = { showFilterBar = !showFilterBar },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
+            containerColor = if (selectedFactions.isNotEmpty() || selectedTags.isNotEmpty() || searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
         ) {
-            Icon(Icons.Default.Help, contentDescription = "Tutorial")
+            Icon(
+                imageVector = if (showFilterBar) Icons.Default.FilterListOff else Icons.Default.FilterList,
+                contentDescription = "Toggle Filters"
+            )
         }
 
         if (shouldShowTutorial) {

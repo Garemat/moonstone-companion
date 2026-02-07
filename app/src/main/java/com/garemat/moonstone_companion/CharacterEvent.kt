@@ -34,5 +34,9 @@ sealed interface CharacterEvent {
     
     // Turn and Moonstone Events
     data object NextTurn : CharacterEvent
+    data object RewindTurn : CharacterEvent
     data class UpdateCharacterMoonstones(val playerIndex: Int, val charIndex: Int, val stones: Int) : CharacterEvent
+
+    // Game Lifecycle
+    data object AbandonGame : CharacterEvent
 }

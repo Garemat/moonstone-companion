@@ -32,7 +32,8 @@ fun HomeScreen(
     onNavigateToTroupes: () -> Unit,
     onNavigateToRules: () -> Unit,
     onNavigateToGameSetup: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    triggerTutorial: Int = 0
 ) {
     val context = LocalContext.current
     var backPressedTime by remember { mutableLongStateOf(0L) }
@@ -40,6 +41,13 @@ fun HomeScreen(
     // Tutorial coordinates tracking
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
     var showTutorialForcefully by remember { mutableStateOf(false) }
+
+    // Listen for global tutorial trigger
+    LaunchedEffect(triggerTutorial) {
+        if (triggerTutorial > 0) {
+            showTutorialForcefully = true
+        }
+    }
 
     val shouldShowTutorial = (!state.hasSeenHomeTutorial || showTutorialForcefully)
 
@@ -120,15 +128,6 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "START GAME", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
             }
-        }
-
-        IconButton(
-            onClick = { showTutorialForcefully = true },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        ) {
-            Icon(Icons.Default.Help, contentDescription = "Tutorial")
         }
 
         if (shouldShowTutorial) {

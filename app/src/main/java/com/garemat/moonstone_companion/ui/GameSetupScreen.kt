@@ -17,11 +17,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -40,6 +42,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.garemat.moonstone_companion.*
+import com.garemat.moonstone_companion.ui.theme.LocalAppTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,7 +51,8 @@ fun GameSetupScreen(
     viewModel: CharacterViewModel,
     onNavigateBack: () -> Unit,
     onStartGame: () -> Unit,
-    onNavigateToAddEditTroupe: () -> Unit
+    onNavigateToAddEditTroupe: () -> Unit,
+    triggerTutorial: Int = 0
 ) {
     var showScannerDialogForPlayer by remember { mutableStateOf<Int?>(null) }
     var showDiscoveryDialog by remember { mutableStateOf(false) }
@@ -56,11 +60,21 @@ fun GameSetupScreen(
     var tutorialStepIndex by remember { mutableIntStateOf(0) }
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
 
-    val shouldShowTutorial = (!state.hasSeenGameSetupTutorial || showTutorialForcefully)
+    // Navigation state within Setup
+    var setupMode by remember { mutableStateOf<SetupMode?>(null) }
 
+    // Logic for existing games confirmation
+    var showAbandonConfirmation by remember { mutableStateOf(false) }
+
+    LaunchedEffect(triggerTutorial) {
+        if (triggerTutorial > 0) {
+            showTutorialForcefully = true
+        }
+    }
+
+    val shouldShowTutorial = (!state.hasSeenGameSetupTutorial || showTutorialForcefully)
     val session = state.gameSession
     
-    // Example Session for Tutorial - Step 12+ switches to this dummy data
     val tutorialSession = remember(shouldShowTutorial, tutorialStepIndex, state.characters) {
         if (shouldShowTutorial && tutorialStepIndex >= 12) {
             val commonWealthChars = state.characters.filter { it.factions.contains(Faction.COMMONWEALTH) }.shuffled().take(3).map { it.id }
@@ -72,43 +86,27 @@ fun GameSetupScreen(
                 isHost = true,
                 players = listOf(
                     GamePlayer(name = state.name.ifEmpty { "Host" }, deviceId = state.deviceId, isReady = true),
-                    GamePlayer(
-                        name = "Players 2",
-                        troupe = Troupe(troupeName = "Example Troupe Name", faction = Faction.COMMONWEALTH, characterIds = commonWealthChars, shareCode = "", autoSelectMembers = true),
-                        isReady = true
-                    ),
-                    GamePlayer(
-                        name = "Eric",
-                        troupe = Troupe(troupeName = "Spooky Troupe", faction = Faction.SHADES, characterIds = shadesChars, shareCode = ""),
-                        isReady = true
-                    ),
-                    GamePlayer(
-                        name = "Not a Goblin",
-                        troupe = Troupe(troupeName = "Not goblins", faction = Faction.DOMINION, characterIds = dominionChars, shareCode = ""),
-                        isReady = true
-                    )
+                    GamePlayer(name = "Players 2", troupe = Troupe(troupeName = "Example Troupe Name", faction = Faction.COMMONWEALTH, characterIds = commonWealthChars, shareCode = "", autoSelectMembers = true), isReady = true),
+                    GamePlayer(name = "Eric", troupe = Troupe(troupeName = "Spooky Troupe", faction = Faction.SHADES, characterIds = shadesChars, shareCode = ""), isReady = true),
+                    GamePlayer(name = "Not a Goblin", troupe = Troupe(troupeName = "Not goblins", faction = Faction.DOMINION, characterIds = dominionChars, shareCode = ""), isReady = true)
                 )
             )
         } else null
     }
 
     val activeSession = tutorialSession ?: session
-    
     val discoveredEndpoints by viewModel.discoveredEndpoints.collectAsState()
     val context = LocalContext.current
 
     val nearbyPermissions = remember {
         val permissions = mutableListOf<String>()
-        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
             permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
         } else {
-            // Location is only strictly required by the system for discovery below Android 12
             permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
@@ -117,9 +115,7 @@ fun GameSetupScreen(
 
     var pendingNearbyAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
-    val nearbyPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
+    val nearbyPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
         if (permissions.values.all { it }) {
             pendingNearbyAction?.invoke()
             pendingNearbyAction = null
@@ -129,18 +125,14 @@ fun GameSetupScreen(
         }
     }
 
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (!isGranted) {
             Toast.makeText(context, "Camera permission is required to scan QR codes", Toast.LENGTH_SHORT).show()
         }
     }
 
     fun checkAndRunNearbyAction(action: () -> Unit) {
-        if (nearbyPermissions.all { 
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED 
-        }) {
+        if (nearbyPermissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
             action()
         } else {
             pendingNearbyAction = action
@@ -148,7 +140,6 @@ fun GameSetupScreen(
         }
     }
 
-    // Listen for start game event from host/session
     LaunchedEffect(viewModel.uiEvent) {
         viewModel.uiEvent.collect { event ->
             if (event is CharacterViewModel.UiEvent.GameStarted) {
@@ -160,93 +151,70 @@ fun GameSetupScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { Text("Game Setup") },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        if (activeSession == null) {
-                            TextButton(
-                                onClick = {
-                                    checkAndRunNearbyAction { viewModel.startHosting(state.name.ifEmpty { "Host" }) }
-                                },
-                                modifier = Modifier.onGloballyPositioned { coordsMap["HostButton"] = it }
-                            ) {
-                                Text("Host")
-                            }
-                            TextButton(
-                                onClick = { 
-                                    checkAndRunNearbyAction {
-                                        viewModel.startDiscovering()
-                                        showDiscoveryDialog = true 
-                                    }
-                                },
-                                modifier = Modifier.onGloballyPositioned { coordsMap["JoinButton"] = it }
-                            ) {
-                                Text("Join")
-                            }
-                        } else {
-                            TextButton(
-                                onClick = { viewModel.leaveSession() },
-                                modifier = Modifier.onGloballyPositioned { coordsMap["LeaveButton"] = it }
-                            ) {
-                                Text("Leave", color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                )
+                // TopBar title and navigation is handled by MainActivity
             }
         ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp)
-            ) {
-                if (activeSession == null) {
-                    OfflineSetupUI(
-                        state = state,
-                        viewModel = viewModel,
-                        onStartGame = onStartGame,
-                        onScanRequest = { index ->
-                            val permission = Manifest.permission.CAMERA
-                            if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
-                                showScannerDialogForPlayer = index
-                            } else {
-                                cameraPermissionLauncher.launch(permission)
-                            }
-                        },
-                        onNavigateToAddEditTroupe = onNavigateToAddEditTroupe,
-                        onPositioned = { name, coords -> coordsMap[name] = coords },
-                        isTutorialMode = shouldShowTutorial,
-                        tutorialStep = tutorialStepIndex
+            Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+                if (state.activeTroupes.isNotEmpty()) {
+                    GameInProgressContent(
+                        isMultiplayer = state.gameSession != null,
+                        onContinue = onStartGame,
+                        onNewGame = { showAbandonConfirmation = true }
                     )
-                } else {
+                } else if (activeSession != null) {
                     SessionSetupUI(
                         state = state,
                         viewModel = viewModel,
                         session = activeSession,
                         troupes = state.troupes,
                         onSelectTroupe = { troupe -> viewModel.broadcastTroupeSelection(troupe) },
-                        onStartGame = {
-                            viewModel.broadcastStartGame()
-                        },
+                        onStartGame = { viewModel.broadcastStartGame() },
                         onNavigateToAddEditTroupe = onNavigateToAddEditTroupe,
                         onPositioned = { name, coords -> coordsMap[name] = coords },
                         isTutorialMode = shouldShowTutorial
                     )
+                } else {
+                    when (setupMode) {
+                        SetupMode.LOCAL -> {
+                            OfflineSetupUI(
+                                state = state,
+                                viewModel = viewModel,
+                                onStartGame = onStartGame,
+                                onScanRequest = { index ->
+                                    val permission = Manifest.permission.CAMERA
+                                    if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) showScannerDialogForPlayer = index
+                                    else cameraPermissionLauncher.launch(permission)
+                                },
+                                onNavigateToAddEditTroupe = onNavigateToAddEditTroupe,
+                                onPositioned = { name, coords -> coordsMap[name] = coords },
+                                isTutorialMode = shouldShowTutorial,
+                                tutorialStep = tutorialStepIndex,
+                                onBack = { setupMode = null }
+                            )
+                        }
+                        else -> {
+                            SetupModeSelection(
+                                onLocalSelected = { setupMode = SetupMode.LOCAL },
+                                onHostSelected = {
+                                    checkAndRunNearbyAction {
+                                        viewModel.startHosting(state.name.ifEmpty { "Host" })
+                                    }
+                                },
+                                onJoinSelected = {
+                                    checkAndRunNearbyAction {
+                                        viewModel.startDiscovering()
+                                        showDiscoveryDialog = true
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
             }
 
             if (showDiscoveryDialog && activeSession == null) {
                 AlertDialog(
-                    onDismissRequest = { 
-                        showDiscoveryDialog = false
-                        viewModel.leaveSession()
-                    },
+                    onDismissRequest = { showDiscoveryDialog = false; viewModel.leaveSession() },
                     title = { Text("Available Games") },
                     text = {
                         Column(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
@@ -272,37 +240,23 @@ fun GameSetupScreen(
                     },
                     confirmButton = {},
                     dismissButton = {
-                        TextButton(onClick = { 
-                            showDiscoveryDialog = false
-                            viewModel.leaveSession()
-                        }) {
-                            Text("Cancel")
-                        }
+                        TextButton(onClick = { showDiscoveryDialog = false; viewModel.leaveSession() }) { Text("Cancel") }
                     }
                 )
             }
 
             if (showScannerDialogForPlayer != null) {
                 val playerIndex = showScannerDialogForPlayer!!
-                Dialog(
-                    onDismissRequest = { showScannerDialogForPlayer = null },
-                    properties = DialogProperties(usePlatformDefaultWidth = false)
-                ) {
+                Dialog(onDismissRequest = { showScannerDialogForPlayer = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        QrScanner(
-                            onResult = { result ->
-                                val importedTroupe = viewModel.importTroupe(result, state.characters)
-                                if (importedTroupe != null) {
-                                    viewModel.onTroupeScanned(playerIndex, importedTroupe)
-                                    showScannerDialogForPlayer = null
-                                }
+                        QrScanner(onResult = { result ->
+                            val importedTroupe = viewModel.importTroupe(result, state.characters)
+                            if (importedTroupe != null) {
+                                viewModel.onTroupeScanned(playerIndex, importedTroupe)
+                                showScannerDialogForPlayer = null
                             }
-                        )
-
-                        IconButton(
-                            onClick = { showScannerDialogForPlayer = null },
-                            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
-                        ) {
+                        })
+                        IconButton(onClick = { showScannerDialogForPlayer = null }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                         }
                     }
@@ -310,17 +264,41 @@ fun GameSetupScreen(
             }
         }
 
-        // Help button in top left - Consistent with other screens
-        IconButton(
-            onClick = { showTutorialForcefully = true },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        ) {
-            Icon(Icons.Default.Help, contentDescription = "Tutorial")
+        if (showAbandonConfirmation) {
+            val isMultiplayer = state.gameSession != null
+            val isHost = state.gameSession?.isHost == true
+            
+            AlertDialog(
+                onDismissRequest = { showAbandonConfirmation = false },
+                title = { Text("Are you sure?") },
+                text = {
+                    Text(when {
+                        !isMultiplayer -> "This will delete the current game state and any tracked Moonstones."
+                        isHost -> "Are you sure? This will close the game for all players."
+                        else -> "Are you sure? You won't be able to rejoin a game in progress if you continue."
+                    })
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.onEvent(CharacterEvent.AbandonGame)
+                            showAbandonConfirmation = false
+                            setupMode = null // Reset setup mode on abandon
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Confirm")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAbandonConfirmation = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
 
-        if (shouldShowTutorial) {
+        if (shouldShowTutorial && state.activeTroupes.isEmpty() && setupMode == SetupMode.LOCAL) {
             Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
                 TutorialOverlay(
                     steps = gameSetupTutorialSteps,
@@ -342,6 +320,183 @@ fun GameSetupScreen(
     }
 }
 
+enum class SetupMode {
+    LOCAL, MULTIPLAYER
+}
+
+@Composable
+fun SetupModeSelection(
+    onLocalSelected: () -> Unit,
+    onHostSelected: () -> Unit,
+    onJoinSelected: () -> Unit
+) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
+    
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "Choose Game Mode",
+            style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 32.sp) else MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified
+        )
+        
+        Spacer(modifier = Modifier.height(32.dp))
+        
+        SetupOptionCard(
+            title = "Local Game",
+            description = "Play on a single device with 2-4 players.",
+            icon = Icons.Default.Smartphone,
+            onClick = onLocalSelected
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        SetupOptionCard(
+            title = "Host Game",
+            description = "Start a multiplayer session for others to join.",
+            icon = Icons.Default.WifiTethering,
+            onClick = onHostSelected
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        SetupOptionCard(
+            title = "Join Game",
+            description = "Connect to an existing multiplayer session nearby.",
+            icon = Icons.Default.Wifi,
+            onClick = onJoinSelected
+        )
+    }
+}
+
+@Composable
+fun SetupOptionCard(
+    title: String,
+    description: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
+    val context = LocalContext.current
+    val backgroundRes = remember { context.resources.getIdentifier("shades", "drawable", context.packageName) }
+    
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().height(100.dp),
+        shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isMoonstone) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isMoonstone) 2.dp else 4.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isMoonstone && backgroundRes != 0) {
+                Image(
+                    painter = painterResource(id = backgroundRes),
+                    contentDescription = null,
+                    modifier = Modifier.matchParentSize().alpha(0.1f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = title, 
+                        style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.titleLarge, 
+                        fontWeight = FontWeight.Bold,
+                        color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified
+                    )
+                    Text(
+                        text = description, 
+                        style = MaterialTheme.typography.bodySmall, 
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GameInProgressContent(
+    isMultiplayer: Boolean,
+    onContinue: () -> Unit,
+    onNewGame: () -> Unit
+) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
+    
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = Icons.Default.History,
+            contentDescription = null,
+            modifier = Modifier.size(80.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Text(
+            text = if (isMultiplayer) "Multiplayer Game in Progress" else "Game in Progress",
+            style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 32.sp) else MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified
+        )
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        Text(
+            text = if (isMultiplayer) 
+                "You have an active session. Would you like to rejoin it or start fresh?" 
+                else "A local game is currently active. You can continue where you left off or start a new game.",
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        
+        Spacer(modifier = Modifier.height(40.dp))
+        
+        Button(
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (isMultiplayer) "REJOIN SESSION" else "CONTINUE GAME", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        OutlinedButton(
+            onClick = onNewGame,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+        ) {
+            Text("START NEW GAME", fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
 @Composable
 fun OfflineSetupUI(
     state: CharacterState,
@@ -351,13 +506,15 @@ fun OfflineSetupUI(
     onNavigateToAddEditTroupe: () -> Unit,
     onPositioned: (String, LayoutCoordinates) -> Unit = { _, _ -> },
     isTutorialMode: Boolean = false,
-    tutorialStep: Int = 0
+    tutorialStep: Int = 0,
+    onBack: () -> Unit = {}
 ) {
     var playerCount by remember { mutableIntStateOf(2) }
     val selectedTroupes = remember { mutableStateListOf<Troupe?>(null, null, null, null) }
     var troupeToPrune by remember { mutableStateOf<Pair<Int, Troupe>?>(null) }
     var troupeToSaveWithName by remember { mutableStateOf<Troupe?>(null) }
     var customTroupeName by remember { mutableStateOf("") }
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     
     LaunchedEffect(Unit) {
         viewModel.scannedTroupeEvent.collect { (index, troupe) ->
@@ -406,11 +563,25 @@ fun OfflineSetupUI(
     Column {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.onGloballyPositioned { onPositioned("PlayerCount", it) }
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .onGloballyPositioned { onPositioned("PlayerCount", it) }
         ) {
-            Text("Local Game", style = MaterialTheme.typography.headlineSmall)
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            
             Spacer(modifier = Modifier.weight(1f))
-            Text("Players: ")
+            
+            Text(
+                text = "Players:", 
+                style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 20.sp) else MaterialTheme.typography.titleMedium,
+                color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified
+            )
+            
+            Spacer(modifier = Modifier.width(8.dp))
+            
             Row {
                 listOf(2, 3, 4).forEach { count ->
                     FilterChip(
@@ -420,10 +591,13 @@ fun OfflineSetupUI(
                             for (i in count until 4) selectedTroupes[i] = null
                         },
                         label = { Text(count.toString()) },
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        shape = if (isMoonstone) RoundedCornerShape(0.dp) else FilterChipDefaults.shape
                     )
                 }
             }
+            
+            Spacer(modifier = Modifier.weight(1f))
         }
         
         Spacer(modifier = Modifier.height(16.dp))
@@ -434,7 +608,8 @@ fun OfflineSetupUI(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    ),
+                    shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -447,7 +622,7 @@ fun OfflineSetupUI(
                             val troupe = selectedTroupes[index]
                             
                             val showSave = troupe != null && state.troupes.none { it.shareCode == troupe.shareCode && troupe.shareCode.isNotEmpty() }
-                            val tutorialForceShowIcons = isTutorialMode && index == 0 && (tutorialStep >= 6 && tutorialStep <= 7)
+                            val tutorialForceShowIcons = isTutorialMode && index == 0 && (tutorialStep in 6..7)
                             
                             if (showSave || (tutorialForceShowIcons && tutorialStep == 6)) {
                                 IconButton(
@@ -541,9 +716,10 @@ fun OfflineSetupUI(
                 }
             },
             enabled = selectedTroupes.take(playerCount).all { it != null },
-            modifier = Modifier.fillMaxWidth().height(56.dp).onGloballyPositioned { onPositioned("BattleButton", it) }
+            modifier = Modifier.fillMaxWidth().height(56.dp).onGloballyPositioned { onPositioned("BattleButton", it) },
+            shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
         ) {
-            Text("BATTLE!")
+            Text("BATTLE!", fontSize = if (isMoonstone) 20.sp else 16.sp, fontWeight = FontWeight.ExtraBold)
         }
     }
     
@@ -588,7 +764,8 @@ fun OfflineSetupUI(
                         onValueChange = { customTroupeName = it },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Troupe Name") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = if (isMoonstone) RoundedCornerShape(0.dp) else OutlinedTextFieldDefaults.shape
                     )
                 }
             },
@@ -600,7 +777,8 @@ fun OfflineSetupUI(
                         }
                         troupeToSaveWithName = null
                     },
-                    enabled = customTroupeName.isNotBlank()
+                    enabled = customTroupeName.isNotBlank(),
+                    shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
                 ) {
                     Text("Save")
                 }
@@ -628,6 +806,7 @@ fun SessionSetupUI(
 ) {
     var troupeToPrune by remember { mutableStateOf<Troupe?>(null) }
     val playerCount = session.players.size
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
 
     LaunchedEffect(playerCount) {
         viewModel.uiEvent.collect { event ->
@@ -650,9 +829,13 @@ fun SessionSetupUI(
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { viewModel.leaveSession() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Leave Session")
+            }
             Text(
                 "Session ID: ${session.sessionId}", 
-                style = MaterialTheme.typography.titleSmall,
+                style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 20.sp) else MaterialTheme.typography.titleSmall,
+                color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified,
                 modifier = Modifier.onGloballyPositioned { onPositioned("SessionId", it) }
             )
             Spacer(modifier = Modifier.weight(1f))
@@ -713,9 +896,10 @@ fun SessionSetupUI(
                 .fillMaxWidth()
                 .padding(top = 16.dp)
                 .height(56.dp)
-                .onGloballyPositioned { onPositioned("StartBattleButton", it) }
+                .onGloballyPositioned { onPositioned("StartBattleButton", it) },
+            shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
         ) {
-            Text(if (session.isHost) "START BATTLE" else "WAITING FOR HOST...")
+            Text(if (session.isHost) "START BATTLE" else "WAITING FOR HOST...", fontSize = if (isMoonstone) 18.sp else 16.sp, fontWeight = FontWeight.ExtraBold)
         }
     }
 
@@ -749,11 +933,14 @@ fun PlayerSlotCard(
     onEditTroupe: (Troupe) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
+    
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+        ),
+        shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -793,7 +980,7 @@ fun PlayerSlotCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = player.troupe.troupeName,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = if (isMoonstone) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
 
@@ -822,16 +1009,22 @@ fun QrCodeDialog(
     shareCode: String,
     onDismiss: () -> Unit
 ) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(if (isMoonstone) 0.dp else 16.dp)
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(troupeName, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                Text(
+                    troupeName, 
+                    style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.headlineSmall, 
+                    textAlign = TextAlign.Center,
+                    color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified
+                )
                 Spacer(modifier = Modifier.height(16.dp))
 
                 val bitmap = remember(shareCode) { BarcodeUtils.generateQrCode(shareCode) }
@@ -845,7 +1038,11 @@ fun QrCodeDialog(
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
-                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onDismiss, 
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
+                ) {
                     Text("Close")
                 }
             }
@@ -867,7 +1064,8 @@ fun TroupeSelector(
     onPositioned: (String, LayoutCoordinates) -> Unit = { _, _ -> }
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
+
     LaunchedEffect(isTutorialMode, tutorialStep) {
         if (isTutorialMode && (tutorialStep == 4 || tutorialStep == 5)) {
             expanded = true
@@ -879,7 +1077,8 @@ fun TroupeSelector(
     Box(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         OutlinedCard(
             onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -889,7 +1088,7 @@ fun TroupeSelector(
                         modifier = Modifier.weight(1f),
                         color = if (selectedTroupe == null) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
                     )
-                    
+
                     if (selectedTroupe != null || (isTutorialMode && tutorialStep >= 9)) {
                         IconButton(
                             onClick = { selectedTroupe?.let { onEditTroupe(it) } },
@@ -906,10 +1105,10 @@ fun TroupeSelector(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                     }
-                    
+
                     Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                 }
-                
+
                 if (selectedTroupe != null) {
                     val names = selectedTroupe.characterIds.mapNotNull { id ->
                         allCharacters.find { it.id == id }?.name
@@ -924,7 +1123,7 @@ fun TroupeSelector(
                 }
             }
         }
-        
+
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -975,14 +1174,20 @@ fun TroupeSelectionDialog(
     }
     val selectedCharacters = remember { mutableStateListOf<Character>() }
     var expandedCharacterId by remember { mutableStateOf<Int?>(null) }
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
 
     AlertDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(if (isMoonstone) 0.dp else 16.dp),
+        shape = if (isMoonstone) RoundedCornerShape(0.dp) else RoundedCornerShape(28.dp),
         title = {
             Column {
-                Text("Select Your Team")
+                Text(
+                    "Select Your Team", 
+                    style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.headlineSmall,
+                    color = if (isMoonstone) MaterialTheme.colorScheme.primary else Color.Unspecified
+                )
                 Text(
                     "Select up to $maxSelection characters for this game.",
                     style = MaterialTheme.typography.labelMedium,
@@ -1020,7 +1225,8 @@ fun TroupeSelectionDialog(
         confirmButton = {
             Button(
                 onClick = { onConfirmed(selectedCharacters.toList()) },
-                enabled = selectedCharacters.isNotEmpty() && selectedCharacters.size <= maxSelection
+                enabled = selectedCharacters.isNotEmpty() && selectedCharacters.size <= maxSelection,
+                shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
             ) {
                 Text("Confirm (${selectedCharacters.size}/$maxSelection)")
             }
@@ -1043,6 +1249,7 @@ fun SelectionCharacterCard(
 ) {
     var isFlipped by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     val imageRes = remember(character.imageName) {
         if (character.imageName != null) {
             val cleanName = character.imageName.substringBeforeLast(".")
@@ -1054,7 +1261,8 @@ fun SelectionCharacterCard(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-        )
+        ),
+        shape = RoundedCornerShape(if (isMoonstone) 0.dp else 12.dp)
     ) {
         Column {
             Row(

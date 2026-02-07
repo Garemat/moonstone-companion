@@ -37,7 +37,8 @@ fun TroupeListScreen(
     viewModel: CharacterViewModel,
     onNavigateBack: () -> Unit,
     onAddTroupe: () -> Unit,
-    onEditTroupe: () -> Unit
+    onEditTroupe: () -> Unit,
+    triggerTutorial: Int = 0
 ) {
     var troupeToDelete by remember { mutableStateOf<Troupe?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -47,28 +48,17 @@ fun TroupeListScreen(
     // Tutorial state
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
     var showTutorialForcefully by remember { mutableStateOf(false) }
+
+    LaunchedEffect(triggerTutorial) {
+        if (triggerTutorial > 0) {
+            showTutorialForcefully = true
+        }
+    }
+
     val shouldShowTutorial = (!state.hasSeenTroupesTutorial || showTutorialForcefully)
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("My Troupes") },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        IconButton(
-                            onClick = { showImportDialog = true },
-                            modifier = Modifier.onGloballyPositioned { coordsMap["ImportTroupe"] = it }
-                        ) {
-                            Icon(Icons.Default.Input, contentDescription = "Import Troupe")
-                        }
-                    }
-                )
-            },
             floatingActionButton = {
                 FloatingActionButton(
                     onClick = onAddTroupe,
@@ -196,16 +186,6 @@ fun TroupeListScreen(
                     }
                 )
             }
-        }
-
-        // Help button in top left - Aligned with HomeScreen
-        IconButton(
-            onClick = { showTutorialForcefully = true },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        ) {
-            Icon(Icons.Default.Help, contentDescription = "Tutorial")
         }
 
         if (shouldShowTutorial) {

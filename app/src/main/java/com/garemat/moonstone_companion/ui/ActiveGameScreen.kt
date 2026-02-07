@@ -3,6 +3,7 @@ package com.garemat.moonstone_companion.ui
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
@@ -232,14 +233,28 @@ fun ActiveGameScreen(
                     MoonstoneIcon(size = 48.dp, modifier = Modifier.alpha(if (isLocalPlayer) 1f else 0.3f))
                 }
 
-                // Next Turn Button - Restrict to local player or host as well if needed
-                Button(
-                    onClick = { viewModel.onEvent(CharacterEvent.NextTurn) },
+                Row(
                     modifier = Modifier.align(Alignment.BottomEnd),
-                    enabled = isLocalPlayer // Only the player whose turn/tab it is can advance? Or maybe only host?
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Next Turn")
-                    Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.padding(start = 4.dp))
+                    // Rewind Button
+                    if (state.turnHistory.isNotEmpty()) {
+                        FilledTonalIconButton(
+                            onClick = { viewModel.onEvent(CharacterEvent.RewindTurn) },
+                            enabled = isLocalPlayer
+                        ) {
+                            Icon(Icons.Default.History, contentDescription = "Rewind Turn")
+                        }
+                    }
+
+                    // Next Turn Button
+                    Button(
+                        onClick = { viewModel.onEvent(CharacterEvent.NextTurn) },
+                        enabled = isLocalPlayer
+                    ) {
+                        Text("Next Turn")
+                        Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.padding(start = 4.dp))
+                    }
                 }
             }
 
