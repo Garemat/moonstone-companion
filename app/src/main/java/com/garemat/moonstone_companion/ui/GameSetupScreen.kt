@@ -954,13 +954,12 @@ fun PlayerSlotCard(
                         modifier = Modifier
                             .size(24.dp)
                             .clip(CircleShape)
-                            .background(getFactionColor(player.troupe.faction))
-                            .padding(4.dp),
+                            .background(getFactionColor(player.troupe.faction)),
                         contentAlignment = Alignment.Center
                     ) {
                         FactionSymbol(
                             faction = player.troupe.faction,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.fillMaxSize(),
                             tint = Color.White
                         )
                     }

@@ -6,6 +6,15 @@ enum class AppTheme {
     DEFAULT, MOONSTONE
 }
 
+@Serializable
+data class NewsItem(
+    val title: String,
+    val url: String,
+    val date: String,
+    val imageUrl: String? = null,
+    val summary: String? = null
+)
+
 data class CharacterState(
     val characters: List<Character> = emptyList(),
     val troupes: List<Troupe> = emptyList(),
@@ -17,6 +26,10 @@ data class CharacterState(
     val sortType: SortType = SortType.NAME,
     val errorMessage: String? = null,
     
+    // News Feed
+    val newsItems: List<NewsItem> = emptyList(),
+    val isFetchingNews: Boolean = false,
+
     // Tutorial State
     val hasSeenHomeTutorial: Boolean = false,
     val hasSeenTroupesTutorial: Boolean = false,
@@ -34,7 +47,15 @@ data class CharacterState(
     val characterPlayStates: Map<String, CharacterPlayState> = emptyMap(),
     val activeTroupes: List<Troupe> = emptyList(),
     // History for rewind: List of (TurnNumber, characterPlayStates)
-    val turnHistory: List<Map<String, CharacterPlayState>> = emptyList()
+    val turnHistory: List<Map<String, CharacterPlayState>> = emptyList(),
+
+    // Ready states for multi-player actions
+    val readyForNextTurn: Set<String> = emptySet(),
+    val readyForRewind: Set<String> = emptySet(),
+
+    // Game End State
+    val winnerName: String? = null,
+    val isTie: Boolean = false
 )
 
 @Serializable

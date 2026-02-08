@@ -138,9 +138,10 @@ class MainActivity : ComponentActivity() {
                                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Discard Changes")
                                             }
                                         } else {
-                                            IconButton(onClick = { triggerTutorial++ }) {
-                                                Icon(Icons.Default.Help, contentDescription = "Tutorial")
-                                            }
+                                            /*IconButton(onClick = { triggerTutorial++ }) {
+                                            //    Icon(Icons.Default.Help, contentDescription = "Tutorial")
+                                            } Temporailly removing tutorials*/
+
                                         }
                                     },
                                     actions = {
@@ -228,11 +229,6 @@ class MainActivity : ComponentActivity() {
                                 HomeScreen(
                                     state = state,
                                     onEvent = viewModel::onEvent,
-                                    onNavigateToCharacters = { navController.navigate(Screen.Characters.route) },
-                                    onNavigateToTroupes = { navController.navigate(Screen.Troupes.route) },
-                                    onNavigateToRules = { navController.navigate(Screen.Rules.route) },
-                                    onNavigateToGameSetup = { navController.navigate(Screen.GameSetup.route) },
-                                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                                     triggerTutorial = triggerTutorial
                                 )
                             }
@@ -304,9 +300,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             composable(Screen.Stats.route) {
-                                Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                    Text("Statistics coming soon!", style = MaterialTheme.typography.headlineMedium)
-                                }
+                                StatsScreen(viewModel = viewModel)
                             }
                         }
                     }

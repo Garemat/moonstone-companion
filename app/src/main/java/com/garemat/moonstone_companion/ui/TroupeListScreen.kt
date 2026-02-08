@@ -232,13 +232,12 @@ fun TroupeListItem(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(getFactionColor(troupe.faction))
-                    .padding(4.dp),
+                    .background(getFactionColor(troupe.faction)),
                 contentAlignment = Alignment.Center
             ) {
                 FactionSymbol(
                     faction = troupe.faction,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.fillMaxSize(),
                     tint = Color.White
                 )
             }

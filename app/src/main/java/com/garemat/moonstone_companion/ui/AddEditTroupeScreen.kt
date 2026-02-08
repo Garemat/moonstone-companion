@@ -128,13 +128,12 @@ fun AddEditTroupeScreen(
                                     .clickable { 
                                         viewModel.selectedTroupeFaction = faction
                                         viewModel.selectedCharacterIds = emptySet()
-                                    }
-                                    .padding(8.dp),
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 FactionSymbol(
                                     faction = faction,
-                                    modifier = Modifier.size(32.dp),
+                                    modifier = Modifier.fillMaxSize(),
                                     tint = if (isSelected) Color.White else getFactionColor(faction)
                                 )
                             }

@@ -23,7 +23,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -155,10 +154,45 @@ fun getFactionIcon(faction: Faction) = when (faction) {
 fun FactionSymbol(faction: Faction, modifier: Modifier = Modifier, tint: Color? = null) {
     val context = LocalContext.current
     val resId = remember(faction) {
-        if (faction == Faction.SHADES) context.resources.getIdentifier("shades", "drawable", context.packageName) else 0
+        val resName = when(faction) {
+            Faction.COMMONWEALTH -> "commonwealth"
+            Faction.DOMINION -> "dominion"
+            Faction.LESHAVULT -> "leshavult"
+            Faction.SHADES -> "shades"
+        }
+        context.resources.getIdentifier(resName, "drawable", context.packageName)
     }
-    if (resId != 0) Image(painter = painterResource(id = resId), contentDescription = faction.name, modifier = modifier)
+    if (resId != 0) Image(
+        painter = painterResource(id = resId), 
+        contentDescription = faction.name, 
+        modifier = modifier.fillMaxSize(),
+        contentScale = ContentScale.Crop
+    )
     else Icon(imageVector = getFactionIcon(faction), contentDescription = faction.name, modifier = modifier, tint = tint ?: Color.Unspecified)
+}
+
+@Composable
+fun FactionCircle(
+    faction: Faction,
+    modifier: Modifier = Modifier,
+    isSelected: Boolean = true,
+    showBorder: Boolean = false,
+    padding: Dp = 0.dp
+) {
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(if (isSelected) getFactionColor(faction) else Color.Transparent)
+            .then(if (showBorder) Modifier.border(2.dp, getFactionColor(faction), CircleShape) else Modifier)
+            .padding(padding),
+        contentAlignment = Alignment.Center
+    ) {
+        FactionSymbol(
+            faction = faction,
+            modifier = Modifier.fillMaxSize(),
+            tint = if (isSelected) Color.White else getFactionColor(faction)
+        )
+    }
 }
 
 @Composable
@@ -166,11 +200,16 @@ fun FactionSelector(selectedFactions: Set<Faction>, onFactionsChange: (Set<Facti
     Row(modifier = modifier.fillMaxWidth().padding(vertical = 8.dp).onGloballyPositioned { onPositioned(it) }, horizontalArrangement = Arrangement.SpaceBetween) {
         Faction.entries.forEach { faction ->
             val isSelected = selectedFactions.contains(faction)
-            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(if (isSelected) getFactionColor(faction) else Color.Transparent).border(2.dp, getFactionColor(faction), CircleShape).clickable {
-                onFactionsChange(if (singleSelect) setOf(faction) else if (isSelected) selectedFactions - faction else selectedFactions + faction)
-            }.padding(8.dp), contentAlignment = Alignment.Center) {
-                FactionSymbol(faction = faction, modifier = Modifier.size(32.dp), tint = if (isSelected) Color.White else getFactionColor(faction))
-            }
+            FactionCircle(
+                faction = faction,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable {
+                        onFactionsChange(if (singleSelect) setOf(faction) else if (isSelected) selectedFactions - faction else selectedFactions + faction)
+                    },
+                isSelected = isSelected,
+                showBorder = true
+            )
         }
     }
 }

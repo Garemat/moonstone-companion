@@ -3,40 +3,42 @@ package com.garemat.moonstone_companion.ui
 import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.Help
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.garemat.moonstone_companion.CharacterEvent
 import com.garemat.moonstone_companion.CharacterState
+import com.garemat.moonstone_companion.NewsItem
+import com.garemat.moonstone_companion.ui.theme.LocalAppTheme
+import com.garemat.moonstone_companion.AppTheme
 
 @Composable
 fun HomeScreen(
     state: CharacterState,
     onEvent: (CharacterEvent) -> Unit,
-    onNavigateToCharacters: () -> Unit,
-    onNavigateToTroupes: () -> Unit,
-    onNavigateToRules: () -> Unit,
-    onNavigateToGameSetup: () -> Unit,
-    onNavigateToSettings: () -> Unit,
     triggerTutorial: Int = 0
 ) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     var backPressedTime by remember { mutableLongStateOf(0L) }
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
     
     // Tutorial coordinates tracking
     val coordsMap = remember { mutableStateMapOf<String, LayoutCoordinates>() }
@@ -66,67 +68,32 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .padding(horizontal = 16.dp)
         ) {
             Text(
-                text = "Moonstone Companion",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 32.dp)
+                text = "Latest News",
+                style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 28.sp) else MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 16.dp)
             )
 
-            HomeButton(
-                text = "Characters",
-                icon = Icons.Default.Person,
-                onClick = onNavigateToCharacters,
-                modifier = Modifier.onGloballyPositioned { coordsMap["Characters"] = it }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            HomeButton(
-                text = "My Troupes",
-                icon = Icons.Default.Group,
-                onClick = onNavigateToTroupes,
-                modifier = Modifier.onGloballyPositioned { coordsMap["My Troupes"] = it }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            HomeButton(
-                text = "Rules Reference",
-                icon = Icons.Default.MenuBook,
-                onClick = onNavigateToRules,
-                modifier = Modifier.onGloballyPositioned { coordsMap["Rules Reference"] = it }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            HomeButton(
-                text = "Settings",
-                icon = Icons.Default.Settings,
-                onClick = onNavigateToSettings,
-                modifier = Modifier.onGloballyPositioned { coordsMap["Settings"] = it }
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Button(
-                onClick = onNavigateToGameSetup,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                    .onGloballyPositioned { coordsMap["START GAME"] = it },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "START GAME", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            if (state.isFetchingNews && state.newsItems.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(state.newsItems) { item ->
+                        NewsCard(
+                            item = item,
+                            onClick = { uriHandler.openUri(item.url) }
+                        )
+                    }
+                }
             }
         }
 
@@ -148,20 +115,57 @@ fun HomeScreen(
 }
 
 @Composable
-fun HomeButton(
-    text: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    OutlinedButton(
-        onClick = onClick,
-        modifier = modifier
+fun NewsCard(item: NewsItem, onClick: () -> Unit) {
+    val isMoonstone = LocalAppTheme.current == AppTheme.MOONSTONE
+    
+    Card(
+        modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .clickable { onClick() },
+        shape = if (isMoonstone) RoundedCornerShape(0.dp) else CardDefaults.shape,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
-        Icon(icon, contentDescription = null)
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(text = text, style = MaterialTheme.typography.bodyLarge)
+        Column {
+            if (item.imageUrl != null) {
+                AsyncImage(
+                    model = item.imageUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = item.title,
+                    style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 20.sp) else MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Text(
+                    text = item.date,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                
+                if (item.summary != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = item.summary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
     }
 }

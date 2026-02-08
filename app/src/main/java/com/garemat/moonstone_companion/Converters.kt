@@ -52,4 +52,10 @@ class Converters {
 
     @TypeConverter
     fun toPassiveAbilityList(value: String) = Json.decodeFromString<List<PassiveAbility>>(value)
+
+    @TypeConverter
+    fun fromPlayerStatList(value: List<PlayerStat>) = Json.encodeToString(value)
+
+    @TypeConverter
+    fun toPlayerStatList(value: String) = Json.decodeFromString<List<PlayerStat>>(value)
 }

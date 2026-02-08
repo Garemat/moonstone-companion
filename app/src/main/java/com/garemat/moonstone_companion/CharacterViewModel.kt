@@ -8,9 +8,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.ktor.client.*
+import io.ktor.client.engine.android.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.jsoup.Jsoup
 import java.util.UUID
 
 class CharacterViewModel(
@@ -20,6 +28,7 @@ class CharacterViewModel(
 
     private val prefs = application.getSharedPreferences("moonstone_prefs", Context.MODE_PRIVATE)
     private val nearbyManager = NearbyManager(application)
+    private val client = HttpClient(Android)
 
     // Persistent Unique Device ID for session rejoin
     private val persistentDeviceId: String = prefs.getString("persistent_device_id", null) ?: run {
@@ -37,11 +46,13 @@ class CharacterViewModel(
         hasSeenCharactersTutorial = prefs.getBoolean("has_seen_characters_tutorial", false),
         hasSeenRulesTutorial = prefs.getBoolean("has_seen_rules_tutorial", false),
         hasSeenSettingsTutorial = prefs.getBoolean("has_seen_settings_tutorial", false),
-        hasSeenGameSetupTutorial = prefs.getBoolean("has_seen_game_setup_tutorial", false)
+        hasSeenGameSetupTutorial = prefs.getBoolean("has_seen_game_setup_tutorial", false),
+        newsItems = loadCachedNews()
     ))
     
     private val _characters = dao.getCharactersOrderedByName()
     private val _troupes = dao.getTroupes()
+    val gameResults = dao.getGameResults().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Rules logic
     private val _rules = MutableStateFlow<List<RuleSection>>(emptyList())
@@ -69,6 +80,7 @@ class CharacterViewModel(
 
     init {
         loadRules()
+        fetchNews()
         nearbyManager.setPayloadListener { endpointId, message ->
             handleSessionMessage(endpointId, message)
         }
@@ -97,6 +109,78 @@ class CharacterViewModel(
         }
     }
 
+    // --- News Feed Logic ---
+
+    private fun loadCachedNews(): List<NewsItem> {
+        val cached = prefs.getString("cached_news", null) ?: return emptyList()
+        return try { Json.decodeFromString(cached) } catch (e: Exception) { emptyList() }
+    }
+
+    private fun fetchNews() {
+        viewModelScope.launch {
+            _state.update { it.copy(isFetchingNews = true) }
+            try {
+                val baseUrl = "https://www.moonstonethegame.com"
+                val latestUrl = "$baseUrl/latest"
+                val response = withContext(Dispatchers.IO) { client.get(latestUrl).bodyAsText() }
+                val doc = Jsoup.parse(response)
+                
+                val articleElements = doc.select(".summary-item").filter { 
+                    val href = it.select("a").attr("href")
+                    href.startsWith("/latest/") && !href.contains("?")
+                }.take(10)
+                
+                val currentItems = _state.value.newsItems
+                
+                if (articleElements.isNotEmpty()) {
+                    val firstUrlRel = articleElements[0].select("a").attr("href")
+                    val firstUrl = if (firstUrlRel.startsWith("http")) firstUrlRel else baseUrl + firstUrlRel
+                    
+                    if (currentItems.isNotEmpty() && currentItems[0].url == firstUrl) {
+                        _state.update { it.copy(isFetchingNews = false) }
+                        return@launch
+                    }
+
+                    val newItems = articleElements.map { element ->
+                        val urlRel = element.select("a").attr("href")
+                        val url = if (urlRel.startsWith("http")) urlRel else baseUrl + urlRel
+                        
+                        val title = element.select(".summary-title").text().ifEmpty { 
+                            element.select("a").text() 
+                        }
+                        val date = element.select(".summary-metadata-item--date").text().ifEmpty { "Recently" }
+                        val summary = element.select(".summary-excerpt").text()
+                        
+                        val img = element.select("img")
+                        var imageUrl = img.attr("data-src").ifEmpty { 
+                            img.attr("src").ifEmpty { 
+                                img.attr("data-image") 
+                            }
+                        }
+                        
+                        if (imageUrl.isNotEmpty() && !imageUrl.startsWith("http")) {
+                            imageUrl = baseUrl + if (imageUrl.startsWith("/")) "" else "/" + imageUrl
+                        }
+
+                        NewsItem(
+                            title = title,
+                            url = url,
+                            date = date,
+                            imageUrl = imageUrl.ifEmpty { null },
+                            summary = summary.ifEmpty { null }
+                        )
+                    }
+
+                    _state.update { it.copy(newsItems = newItems, isFetchingNews = false) }
+                    prefs.edit().putString("cached_news", Json.encodeToString(newItems)).apply()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _state.update { it.copy(isFetchingNews = false) }
+            }
+        }
+    }
+
     // Troupe Draft State
     var editingTroupeId by mutableStateOf<Int?>(null)
     var newTroupeName by mutableStateOf("")
@@ -117,16 +201,12 @@ class CharacterViewModel(
         }
         combine(flows) { troupePairs ->
             troupePairs.toList().map { (troupe, characters) ->
-                // Character summmons logic:
-                // Find any characters in the troupe that have 'summonsCharacterIds'
                 val summonIds = characters.flatMap { it.summonsCharacterIds }
                 if (summonIds.isNotEmpty()) {
-                    // Fetch summoned characters but exclude those already present in the troupe
                     val allCharacters = currentState.characters
                     val currentIdsInTroupe = characters.map { it.id }.toSet()
                     
                     val summonedCharacters = summonIds.filter { sId ->
-                        // Only add as a summon if they aren't already manually selected in the troupe
                         !currentIdsInTroupe.contains(sId)
                     }.mapNotNull { sId ->
                         allCharacters.find { it.id == sId }
@@ -139,7 +219,6 @@ class CharacterViewModel(
             }
         }
     }.onEach { players ->
-        // When characters are loaded for a new game, initialize their play states if not already done
         if (players.isNotEmpty() && _state.value.characterPlayStates.isEmpty()) {
             val initialStates = mutableMapOf<String, CharacterPlayState>()
             players.forEachIndexed { pIdx, (troupe, characters) ->
@@ -214,6 +293,10 @@ class CharacterViewModel(
                 prefs.edit().putBoolean(prefKey, event.seen).apply()
             }
             
+            CharacterEvent.RefreshNews -> {
+                fetchNews()
+            }
+
             // Gameplay Events
             is CharacterEvent.UpdateCharacterHealth -> {
                 updateCharacterState(event.playerIndex, event.charIndex) { 
@@ -246,13 +329,13 @@ class CharacterViewModel(
                 }
             }
             CharacterEvent.ResetGamePlayState -> {
-                _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1, turnHistory = emptyList()) }
+                _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1, turnHistory = emptyList(), winnerName = null, isTie = false) }
             }
             CharacterEvent.NextTurn -> {
-                handleNextTurn()
+                handleReadyAction(GameAction.NEXT_TURN)
             }
             CharacterEvent.RewindTurn -> {
-                handleRewindTurn()
+                handleReadyAction(GameAction.REWIND)
             }
             is CharacterEvent.UpdateCharacterMoonstones -> {
                 updateCharacterState(event.playerIndex, event.charIndex) { 
@@ -266,7 +349,9 @@ class CharacterViewModel(
                     characterPlayStates = emptyMap(),
                     currentTurn = 1,
                     gameSession = null,
-                    turnHistory = emptyList()
+                    turnHistory = emptyList(),
+                    winnerName = null,
+                    isTie = false
                 )}
                 nearbyManager.stopAll()
             }
@@ -286,9 +371,104 @@ class CharacterViewModel(
 
     private fun calculateReplenishedEnergy(character: Character, currentHealth: Int): Int {
         if (currentHealth <= 0) return 0
-        // Find how many thresholds are met
         val thresholdsMet = character.energyTrack.count { currentHealth >= it }
         return thresholdsMet
+    }
+
+    private fun handleReadyAction(action: GameAction) {
+        val session = _state.value.gameSession ?: run {
+            if (action == GameAction.NEXT_TURN) attemptNextTurn() else handleRewindTurn()
+            return
+        }
+
+        val deviceId = persistentDeviceId
+        val isReady = when(action) {
+            GameAction.NEXT_TURN -> !_state.value.readyForNextTurn.contains(deviceId)
+            GameAction.REWIND -> !_state.value.readyForRewind.contains(deviceId)
+        }
+
+        val readyMsg = SessionMessage.ReadyForAction(action, deviceId, isReady)
+        nearbyManager.sendPayloadToAll(MessageParser.encode(readyMsg))
+        handleSessionMessage("LOCAL", MessageParser.encode(readyMsg))
+    }
+
+    private fun attemptNextTurn() {
+        val currentState = _state.value
+        val playersData = playersWithCharacters.value
+        if (playersData.isEmpty()) return
+
+        // Victory Logic Check
+        if (currentState.currentTurn >= 4) {
+            val playerStones = playersData.mapIndexed { pIdx, (troupe, characters) ->
+                val total = characters.indices.sumOf { cIdx ->
+                    currentState.characterPlayStates["${pIdx}_${cIdx}"]?.moonstones ?: 0
+                }
+                troupe.troupeName to total
+            }
+
+            val maxStones = playerStones.maxOf { it.second }
+            val winners = playerStones.mapIndexedNotNull { index, pair -> if (pair.second == maxStones) index else null }
+
+            if (winners.size == 1) {
+                // Clear winner found
+                val winnerIdx = winners[0]
+                _state.update { it.copy(winnerName = playerStones[winnerIdx].first) }
+                saveGameResult(winnerIdx)
+                broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
+                return
+            } else if (currentState.currentTurn == 5) {
+                // End of sudden death with no clear winner
+                _state.update { it.copy(isTie = true) }
+                saveGameResult(null)
+                broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
+                return
+            }
+            // If it's round 4 and tie, progress to Sudden Death (Round 5)
+        }
+
+        handleNextTurn()
+    }
+
+    private fun saveGameResult(winnerIndex: Int?) {
+        val currentState = _state.value
+        val playersData = playersWithCharacters.value
+        if (playersData.isEmpty()) return
+
+        viewModelScope.launch {
+            val session = currentState.gameSession
+            val playerStats = playersData.mapIndexed { pIdx, (troupe, characters) ->
+                val charStats = characters.mapIndexed { cIdx, character ->
+                    val playState = currentState.characterPlayStates["${pIdx}_${cIdx}"]
+                    CharacterGameStat(
+                        characterId = character.id,
+                        name = character.name,
+                        stones = playState?.moonstones ?: 0,
+                        died = (playState?.currentHealth ?: 0) <= 0
+                    )
+                }
+                
+                val pName = if (session != null) {
+                    session.players.getOrNull(pIdx)?.name
+                } else {
+                    if (pIdx == 0) currentState.name.ifEmpty { null } else "Player ${pIdx + 1}"
+                }
+
+                PlayerStat(
+                    playerName = pName,
+                    troupeName = troupe.troupeName,
+                    faction = troupe.faction,
+                    totalStones = charStats.sumOf { it.stones },
+                    characterStats = charStats
+                )
+            }
+
+            val gameResult = GameResult(
+                timestamp = System.currentTimeMillis(),
+                playerStats = playerStats,
+                winnerIndex = winnerIndex
+            )
+            dao.upsertGameResult(gameResult)
+        }
     }
 
     private fun handleNextTurn() {
@@ -296,11 +476,9 @@ class CharacterViewModel(
         val playersData = playersWithCharacters.value
         if (playersData.isEmpty()) return
 
-        // 1. Save current state to history
         val updatedHistory = currentState.turnHistory + listOf(currentState.characterPlayStates)
-
-        // 2. Calculate new state with energy replenishment
         val newPlayStates = currentState.characterPlayStates.toMutableMap()
+        
         playersData.forEachIndexed { pIdx, (_, characters) ->
             characters.forEachIndexed { cIdx, character ->
                 val key = "${pIdx}_$cIdx"
@@ -309,30 +487,21 @@ class CharacterViewModel(
                     val replenishedEnergy = calculateReplenishedEnergy(character, playState.currentHealth)
                     newPlayStates[key] = playState.copy(
                         currentEnergy = replenishedEnergy,
-                        usedAbilities = emptyMap() // Reset turn-based abilities if any (optional, usually abilities are turn-based)
+                        usedAbilities = emptyMap()
                     )
                 }
             }
         }
 
-        // 3. Update state
         _state.update { it.copy(
             characterPlayStates = newPlayStates,
             currentTurn = it.currentTurn + 1,
-            turnHistory = updatedHistory
+            turnHistory = updatedHistory,
+            readyForNextTurn = emptySet(),
+            readyForRewind = emptySet()
         ) }
 
-        // 4. Sync
-        broadcastTurnUpdate(_state.value.currentTurn)
-        // Re-sync all play states to ensure everyone has the new energy values
-        newPlayStates.forEach { (key, playState) ->
-            val parts = key.split("_")
-            if (parts.size == 2) {
-                val pIdx = parts[0].toInt()
-                val cIdx = parts[1].toInt()
-                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(pIdx, cIdx, health = playState.currentHealth, energy = playState.currentEnergy, moonstones = playState.moonstones))
-            }
-        }
+        broadcastTurnUpdate(_state.value.currentTurn, newPlayStates)
     }
 
     private fun handleRewindTurn() {
@@ -345,20 +514,15 @@ class CharacterViewModel(
             currentState.copy(
                 characterPlayStates = previousStates,
                 currentTurn = (currentState.currentTurn - 1).coerceAtLeast(1),
-                turnHistory = newHistory
+                turnHistory = newHistory,
+                readyForNextTurn = emptySet(),
+                readyForRewind = emptySet(),
+                winnerName = null,
+                isTie = false
             )
         }
         
-        // Sync rewind to others
-        broadcastTurnUpdate(_state.value.currentTurn)
-        _state.value.characterPlayStates.forEach { (key, playState) ->
-            val parts = key.split("_")
-            if (parts.size == 2) {
-                val pIdx = parts[0].toInt()
-                val cIdx = parts[1].toInt()
-                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(pIdx, cIdx, health = playState.currentHealth, energy = playState.currentEnergy, moonstones = playState.moonstones))
-            }
-        }
+        broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
     }
 
     fun startNewGame(troupes: List<Troupe>) {
@@ -366,7 +530,11 @@ class CharacterViewModel(
             characterPlayStates = emptyMap(), 
             currentTurn = 1,
             activeTroupes = troupes,
-            turnHistory = emptyList()
+            turnHistory = emptyList(),
+            readyForNextTurn = emptySet(),
+            readyForRewind = emptySet(),
+            winnerName = null,
+            isTie = false
         ) }
     }
 
@@ -506,7 +674,6 @@ class CharacterViewModel(
                 )
                 
                 val updatedPlayers = currentSession.players.map { player ->
-                    // Match based on persistent deviceId
                     if (player.deviceId == message.deviceId) {
                         player.copy(troupe = newTroupe)
                     } else player
@@ -534,15 +701,53 @@ class CharacterViewModel(
                     }
                     newState
                 }
-                // If host, rebroadcast to others
-                if (currentSession.isHost) {
-                    nearbyManager.sendPayload(endpointId, MessageParser.encode(message)) // Note: actually handleSessionMessage logic usually handles rebroadcast via sendPayloadToAll in specific cases, but let's be consistent with broadcaseGameplayUpdate
+                if (currentSession.isHost && endpointId != "LOCAL") {
+                    nearbyManager.sendPayloadToAll(MessageParser.encode(message))
                 }
             }
             is SessionMessage.TurnUpdate -> {
-                _state.update { it.copy(currentTurn = message.turn) }
-                if (currentSession.isHost) {
+                _state.update { currentState ->
+                    val isNextTurn = message.turn > currentState.currentTurn
+                    val isRewind = message.turn < currentState.currentTurn
+                    
+                    val newHistory = when {
+                        isNextTurn -> currentState.turnHistory + listOf(currentState.characterPlayStates)
+                        isRewind -> currentState.turnHistory.dropLast(1)
+                        else -> currentState.turnHistory
+                    }
+
+                    currentState.copy(
+                        currentTurn = message.turn,
+                        characterPlayStates = message.characterPlayStates,
+                        turnHistory = newHistory,
+                        readyForNextTurn = emptySet(),
+                        readyForRewind = emptySet()
+                    )
+                }
+                if (currentSession.isHost && endpointId != "LOCAL") {
                     nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                }
+            }
+            is SessionMessage.ReadyForAction -> {
+                _state.update { currentState ->
+                    val currentReadySet = if (message.action == GameAction.NEXT_TURN) currentState.readyForNextTurn else currentState.readyForRewind
+                    val newReadySet = if (message.isReady) currentReadySet + message.deviceId else currentReadySet - message.deviceId
+                    
+                    if (message.action == GameAction.NEXT_TURN) currentState.copy(readyForNextTurn = newReadySet)
+                    else currentState.copy(readyForRewind = newReadySet)
+                }
+
+                if (currentSession.isHost) {
+                    val currentState = _state.value
+                    val readySet = if (message.action == GameAction.NEXT_TURN) currentState.readyForNextTurn else currentState.readyForRewind
+                    val allReady = currentSession.players.all { readySet.contains(it.deviceId) }
+                    
+                    if (allReady) {
+                        if (message.action == GameAction.NEXT_TURN) attemptNextTurn()
+                        else handleRewindTurn()
+                    } else if (endpointId != "LOCAL") {
+                        nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                    }
                 }
             }
             else -> {}
@@ -573,9 +778,9 @@ class CharacterViewModel(
                 if (it.deviceId == persistentDeviceId) it.copy(troupe = troupe) else it 
             }
             _state.update { it.copy(gameSession = session.copy(players = updatedPlayers)) }
+            handleSessionMessage("LOCAL", json)
             nearbyManager.sendPayloadToAll(json)
         } else {
-            // Locally update client state immediately for responsiveness
             val updatedPlayers = session.players.map { 
                 if (it.deviceId == persistentDeviceId) it.copy(troupe = troupe) else it
             }
@@ -589,9 +794,9 @@ class CharacterViewModel(
         nearbyManager.sendPayloadToAll(MessageParser.encode(update))
     }
 
-    fun broadcastTurnUpdate(turn: Int) {
+    fun broadcastTurnUpdate(turn: Int, states: Map<String, CharacterPlayState>) {
         val session = _state.value.gameSession ?: return
-        nearbyManager.sendPayloadToAll(MessageParser.encode(SessionMessage.TurnUpdate(turn)))
+        nearbyManager.sendPayloadToAll(MessageParser.encode(SessionMessage.TurnUpdate(turn, states)))
     }
 
     fun broadcastStartGame() {
@@ -599,7 +804,7 @@ class CharacterViewModel(
         if (session.isHost) {
             val msg = SessionMessage.StartGame
             nearbyManager.sendPayloadToAll(MessageParser.encode(msg))
-            handleSessionMessage("HOST", MessageParser.encode(msg))
+            handleSessionMessage("LOCAL", MessageParser.encode(msg))
         }
     }
 

@@ -38,7 +38,18 @@ sealed class SessionMessage {
     ) : SessionMessage()
 
     @Serializable
-    data class TurnUpdate(val turn: Int) : SessionMessage()
+    data class TurnUpdate(
+        val turn: Int, 
+        val characterPlayStates: Map<String, CharacterPlayState>
+    ) : SessionMessage()
+
+    @Serializable
+    data class ReadyForAction(val action: GameAction, val deviceId: String, val isReady: Boolean) : SessionMessage()
+}
+
+@Serializable
+enum class GameAction {
+    NEXT_TURN, REWIND
 }
 
 object MessageParser {

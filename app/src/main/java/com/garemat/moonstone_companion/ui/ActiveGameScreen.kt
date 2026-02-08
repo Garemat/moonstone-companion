@@ -31,6 +31,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,32 +70,54 @@ fun ActiveGameScreen(
                 CenterAlignedTopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Rewind Section
+                            val isRewindReady = state.readyForRewind.contains(state.deviceId)
+                            val rewindCount = state.readyForRewind.size
+                            val totalPlayers = state.gameSession?.players?.size ?: 1
+                            val canRewind = state.currentTurn > 1
+                            
                             IconButton(
                                 onClick = { viewModel.onEvent(CharacterEvent.RewindTurn) },
-                                enabled = state.turnHistory.isNotEmpty()
+                                enabled = canRewind
                             ) {
-                                Icon(
-                                    Icons.Default.History, 
-                                    contentDescription = "Rewind Turn",
-                                    tint = if (state.turnHistory.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        Icons.Default.History, 
+                                        contentDescription = "Rewind Turn",
+                                        tint = if (isRewindReady) MaterialTheme.colorScheme.primary 
+                                               else if (canRewind) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                               else MaterialTheme.colorScheme.outline
+                                    )
+                                    if (state.gameSession != null) {
+                                        Text("($rewindCount/$totalPlayers)", style = MaterialTheme.typography.labelSmall, fontSize = 8.sp)
+                                    }
+                                }
                             }
                             
                             Text(
-                                text = if (state.currentTurn > 4) "Round: Sudden Death" else "Round: " + state.currentTurn,
+                                text = if (state.currentTurn > 4) "Sudden Death" else "Round: " + state.currentTurn,
                                 style = if (isMoonstone) MaterialTheme.typography.displayLarge.copy(fontSize = 24.sp) else MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
 
+                            // Next Turn Section
+                            val isNextReady = state.readyForNextTurn.contains(state.deviceId)
+                            val nextCount = state.readyForNextTurn.size
+
                             IconButton(
                                 onClick = { viewModel.onEvent(CharacterEvent.NextTurn) }
                             ) {
-                                Icon(
-                                    Icons.Default.SkipNext, 
-                                    contentDescription = "Next Turn",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        Icons.Default.SkipNext, 
+                                        contentDescription = "Next Turn",
+                                        tint = if (isNextReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                    )
+                                    if (state.gameSession != null) {
+                                        Text("($nextCount/$totalPlayers)", style = MaterialTheme.typography.labelSmall, fontSize = 8.sp)
+                                    }
+                                }
                             }
                         }
                     },
@@ -183,7 +206,7 @@ fun ActiveGameScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            MoonstoneIcon(size = 32.dp, modifier = Modifier.alpha(if (isLocalPlayer) 1f else 0.3f))
+                             MoonstoneIcon(size = 32.dp, modifier = Modifier.alpha(if (isLocalPlayer) 1f else 0.3f))
                             Text("POOL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
                         }
                     }
@@ -296,6 +319,46 @@ fun ActiveGameScreen(
             }
         }
     }
+
+    // --- Victory/Tie Dialogs ---
+
+    if (state.winnerName != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onEvent(CharacterEvent.ResetGamePlayState) },
+            title = { Text("Victory!", style = if (isMoonstone) MaterialTheme.typography.displayLarge else MaterialTheme.typography.headlineMedium) },
+            text = { 
+                Text(
+                    text = "${state.winnerName} has collected the most Moonstones and wins the game!",
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.onEvent(CharacterEvent.ResetGamePlayState) }) {
+                    Text("New Game")
+                }
+            }
+        )
+    }
+
+    if (state.isTie) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onEvent(CharacterEvent.ResetGamePlayState) },
+            title = { Text("It's a Tie!", style = if (isMoonstone) MaterialTheme.typography.displayLarge else MaterialTheme.typography.headlineMedium) },
+            text = { 
+                Text(
+                    text = "No single player collected more Moonstones than the others. The game ends in a draw!",
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.onEvent(CharacterEvent.ResetGamePlayState) }) {
+                    Text("New Game")
+                }
+            }
+        )
+    }
 }
 
 sealed class StoneSource {
@@ -395,7 +458,7 @@ fun CharacterGameCard(
                                         },
                                         onDrag = { change, dragAmount ->
                                             change.consume()
-                                            currentOnDrag(dragAmount)
+                                            dragAmount.let { currentOnDrag(it) }
                                         },
                                         onDragEnd = { currentOnDragEnd() },
                                         onDragCancel = { currentOnDragEnd() }

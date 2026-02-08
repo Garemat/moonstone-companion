@@ -24,6 +24,9 @@ sealed interface CharacterEvent {
     // Tutorial
     data class SetHasSeenTutorial(val tutorialKey: String, val seen: Boolean) : CharacterEvent
 
+    // News
+    data object RefreshNews : CharacterEvent
+
     // Gameplay Events
     data class UpdateCharacterHealth(val playerIndex: Int, val charIndex: Int, val health: Int) : CharacterEvent
     data class UpdateCharacterEnergy(val playerIndex: Int, val charIndex: Int, val energy: Int) : CharacterEvent

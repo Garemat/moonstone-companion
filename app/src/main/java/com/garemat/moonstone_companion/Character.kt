@@ -136,3 +136,30 @@ data class Troupe(
     val shareCode: String,
     val autoSelectMembers: Boolean = false
 )
+
+@Entity
+@Serializable
+data class GameResult(
+    @PrimaryKey(autoGenerate = true)
+    val id: Int = 0,
+    val timestamp: Long,
+    val playerStats: List<PlayerStat>,
+    val winnerIndex: Int? // null if tie
+)
+
+@Serializable
+data class PlayerStat(
+    val playerName: String?,
+    val troupeName: String,
+    val faction: Faction,
+    val totalStones: Int,
+    val characterStats: List<CharacterGameStat>
+)
+
+@Serializable
+data class CharacterGameStat(
+    val characterId: Int,
+    val name: String,
+    val stones: Int,
+    val died: Boolean
+)
