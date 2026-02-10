@@ -51,9 +51,19 @@ jobs:
     - name: Grant execute permission for gradlew
       if: steps.bump_type.outputs.type != 'none'
       run: chmod +x gradlew
-      
+
+    - name: Decode Keystore
+      if: steps.bump_type.outputs.type != 'none'
+      run: |
+        echo "${{ secrets.RELEASE_KEYSTORE }}" | base64 --decode > app/release.keystore
+
     - name: Build Release APK
       if: steps.bump_type.outputs.type != 'none'
+      env:
+        KEYSTORE_PATH: release.keystore
+        KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
       run: ./gradlew assembleRelease
 
     - name: Create GitHub Release
@@ -61,7 +71,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.tag_version.outputs.new_tag }}
-        files: app/build/outputs/apk/release/app-release.apk
+        files: app/release/app-release.apk
         name: Release ${{ steps.tag_version.outputs.new_tag }}
         generate_release_notes: true
       env:
