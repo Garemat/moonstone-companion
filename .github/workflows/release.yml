@@ -40,11 +40,11 @@ jobs:
         DEFAULT_BUMP: ${{ steps.bump_type.outputs.type }}
         WITH_V: true
 
-    - name: set up JDK 11
+    - name: set up JDK 17
       if: steps.bump_type.outputs.type != 'none'
       uses: actions/setup-java@v4
       with:
-        java-version: '11'
+        java-version: '17'
         distribution: 'temurin'
         cache: gradle
 
