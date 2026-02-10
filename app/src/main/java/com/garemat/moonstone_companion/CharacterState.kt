@@ -20,7 +20,7 @@ data class CharacterState(
     val troupes: List<Troupe> = emptyList(),
     val name: String = "",
     val deviceId: String = "",
-    val theme: AppTheme = AppTheme.DEFAULT,
+    val theme: AppTheme = AppTheme.MOONSTONE,
     val isAddingCharacter: Boolean = false,
     val isAddingTroupe: Boolean = false,
     val sortType: SortType = SortType.NAME,
