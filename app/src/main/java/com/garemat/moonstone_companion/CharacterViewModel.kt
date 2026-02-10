@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.*
 import io.ktor.client.engine.android.*
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +29,13 @@ class CharacterViewModel(
 
     private val prefs = application.getSharedPreferences("moonstone_prefs", Context.MODE_PRIVATE)
     private val nearbyManager = NearbyManager(application)
-    private val client = HttpClient(Android)
+    private val client = HttpClient(Android) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 15000
+            connectTimeoutMillis = 15000
+            socketTimeoutMillis = 15000
+        }
+    }
 
     // Persistent Unique Device ID for session rejoin
     private val persistentDeviceId: String = prefs.getString("persistent_device_id", null) ?: run {
@@ -40,7 +47,7 @@ class CharacterViewModel(
     private val _state = MutableStateFlow(CharacterState(
         name = prefs.getString("player_name", "") ?: "",
         deviceId = persistentDeviceId,
-        theme = AppTheme.valueOf(prefs.getString("app_theme", AppTheme.DEFAULT.name) ?: AppTheme.DEFAULT.name),
+        theme = AppTheme.valueOf(prefs.getString("app_theme", AppTheme.MOONSTONE.name) ?: AppTheme.DEFAULT.name),
         hasSeenHomeTutorial = prefs.getBoolean("has_seen_home_tutorial", false),
         hasSeenTroupesTutorial = prefs.getBoolean("has_seen_troupes_tutorial", false),
         hasSeenCharactersTutorial = prefs.getBoolean("has_seen_characters_tutorial", false),
@@ -125,41 +132,61 @@ class CharacterViewModel(
                 val response = withContext(Dispatchers.IO) { client.get(latestUrl).bodyAsText() }
                 val doc = Jsoup.parse(response)
                 
-                val articleElements = doc.select(".summary-item").filter { 
-                    val href = it.select("a").attr("href")
-                    href.startsWith("/latest/") && !href.contains("?")
-                }.take(10)
-                
-                val currentItems = _state.value.newsItems
+                // Squarespace blog grid often uses 'article' tags within a specific section
+                val articleElements = doc.select("article, .summary-item, .blog-item")
                 
                 if (articleElements.isNotEmpty()) {
-                    val firstUrlRel = articleElements[0].select("a").attr("href")
-                    val firstUrl = if (firstUrlRel.startsWith("http")) firstUrlRel else baseUrl + firstUrlRel
-                    
-                    if (currentItems.isNotEmpty() && currentItems[0].url == firstUrl) {
-                        _state.update { it.copy(isFetchingNews = false) }
-                        return@launch
-                    }
-
-                    val newItems = articleElements.map { element ->
-                        val urlRel = element.select("a").attr("href")
+                    val newItems = articleElements.mapNotNull { element ->
+                        // Find the main link for the article
+                        val aTag = element.select("a[href*='/latest/']").firstOrNull() 
+                            ?: element.select("a").firstOrNull() 
+                            ?: return@mapNotNull null
+                            
+                        val urlRel = aTag.attr("href")
+                        
+                        // Skip category pages, "All" filters, or the main 'latest' landing page
+                        if (urlRel.contains("/category/") || 
+                            urlRel.endsWith("/latest") || 
+                            urlRel.endsWith("/latest/") ||
+                            urlRel.contains("?category=")
+                        ) {
+                            return@mapNotNull null
+                        }
+                        
                         val url = if (urlRel.startsWith("http")) urlRel else baseUrl + urlRel
                         
-                        val title = element.select(".summary-title").text().ifEmpty { 
-                            element.select("a").text() 
-                        }
-                        val date = element.select(".summary-metadata-item--date").text().ifEmpty { "Recently" }
-                        val summary = element.select(".summary-excerpt").text()
+                        // Use firstOrNull() to avoid data duplication from multiple matching nested tags
+                        val title = element.select("h1, h2, h3, .summary-title, .blog-title, .blog-item-title").firstOrNull()?.text()?.trim() 
+                            ?: aTag.text().trim()
                         
-                        val img = element.select("img")
-                        var imageUrl = img.attr("data-src").ifEmpty { 
-                            img.attr("src").ifEmpty { 
-                                img.attr("data-image") 
+                        if (title.isEmpty()) return@mapNotNull null
+
+                        val date = element.select("time, .summary-metadata-item--date, .blog-date, .blog-meta-item--date")
+                            .firstOrNull()?.text()?.trim() ?: "Recently"
+                            
+                        val summary = element.select(".summary-excerpt, .blog-excerpt, .blog-item-excerpt")
+                            .firstOrNull()?.text()?.trim() 
+                            ?: element.select("p").firstOrNull()?.text()?.trim()
+                            ?: ""
+                        
+                        // Image extraction for Squarespace
+                        val img = element.select("img").firstOrNull()
+                        var imageUrl = img?.let {
+                            it.attr("data-src").ifEmpty { 
+                                it.attr("src").ifEmpty { 
+                                    it.attr("data-image") 
+                                }
                             }
-                        }
+                        } ?: ""
                         
-                        if (imageUrl.isNotEmpty() && !imageUrl.startsWith("http")) {
-                            imageUrl = baseUrl + if (imageUrl.startsWith("/")) "" else "/" + imageUrl
+                        if (imageUrl.isNotEmpty()) {
+                            if (!imageUrl.startsWith("http")) {
+                                imageUrl = baseUrl + if (imageUrl.startsWith("/")) "" else "/" + imageUrl
+                            }
+                            // Append format for Squarespace images to ensure they load
+                            if (!imageUrl.contains("format=")) {
+                                imageUrl += if (imageUrl.contains("?")) "&format=1000w" else "?format=1000w"
+                            }
                         }
 
                         NewsItem(
@@ -169,13 +196,22 @@ class CharacterViewModel(
                             imageUrl = imageUrl.ifEmpty { null },
                             summary = summary.ifEmpty { null }
                         )
-                    }
+                    }.distinctBy { it.url }.take(10)
 
-                    _state.update { it.copy(newsItems = newItems, isFetchingNews = false) }
-                    prefs.edit().putString("cached_news", Json.encodeToString(newItems)).apply()
+                    if (newItems.isNotEmpty()) {
+                        val currentItems = _state.value.newsItems
+                        val isSameAsCached = currentItems.isNotEmpty() && currentItems[0].url == newItems[0].url
+                        
+                        // Update state and cache if news has changed or was empty
+                        if (!isSameAsCached || currentItems.isEmpty()) {
+                            _state.update { it.copy(newsItems = newItems) }
+                            prefs.edit().putString("cached_news", Json.encodeToString(newItems)).apply()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+            } finally {
                 _state.update { it.copy(isFetchingNews = false) }
             }
         }

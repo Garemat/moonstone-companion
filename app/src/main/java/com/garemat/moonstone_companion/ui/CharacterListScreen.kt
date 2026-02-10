@@ -39,7 +39,7 @@ fun CharacterListScreen(
     }
     
     var selectedTags by remember { mutableStateOf(setOf<String>()) }
-    var showFilterBar by remember { mutableStateOf(false) }
+    var showFilterBar by remember { mutableStateOf(true) }
 
     LaunchedEffect(searchQuery) {
         if (searchQuery.isEmpty()) {
