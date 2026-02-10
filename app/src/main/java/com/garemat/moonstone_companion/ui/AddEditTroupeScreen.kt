@@ -255,7 +255,7 @@ fun AddEditTroupeScreen(
                     modifier = Modifier.onGloballyPositioned { coordsMap["FilterButton"] = it }
                 ) {
                     Icon(
-                        imageVector = if (isHeaderVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        imageVector = if (isHeaderVisible) Icons.Default.FilterListOff else Icons.Default.FilterList,
                         contentDescription = "Toggle Header"
                     )
                 }
