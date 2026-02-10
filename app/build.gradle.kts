@@ -66,6 +66,11 @@ dependencies {
     implementation(libs.play.services.mlkit.barcode.scanning)
 
     implementation(libs.play.services.nearby)
+    
+    implementation(libs.jsoup)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.android)
+    implementation(libs.coil.compose)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

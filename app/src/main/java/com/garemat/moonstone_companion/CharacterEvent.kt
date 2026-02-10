@@ -19,4 +19,27 @@ sealed interface CharacterEvent {
     data object DismissError : CharacterEvent
 
     data class UpdateUserName(val name: String) : CharacterEvent
+    data class ChangeTheme(val theme: AppTheme) : CharacterEvent
+    
+    // Tutorial
+    data class SetHasSeenTutorial(val tutorialKey: String, val seen: Boolean) : CharacterEvent
+
+    // News
+    data object RefreshNews : CharacterEvent
+
+    // Gameplay Events
+    data class UpdateCharacterHealth(val playerIndex: Int, val charIndex: Int, val health: Int) : CharacterEvent
+    data class UpdateCharacterEnergy(val playerIndex: Int, val charIndex: Int, val energy: Int) : CharacterEvent
+    data class ToggleAbilityUsed(val playerIndex: Int, val charIndex: Int, val abilityName: String, val used: Boolean) : CharacterEvent
+    data class ToggleCharacterFlipped(val playerIndex: Int, val charIndex: Int, val flipped: Boolean) : CharacterEvent
+    data class ToggleCharacterExpanded(val playerIndex: Int, val charIndex: Int, val expanded: Boolean) : CharacterEvent
+    data object ResetGamePlayState : CharacterEvent
+    
+    // Turn and Moonstone Events
+    data object NextTurn : CharacterEvent
+    data object RewindTurn : CharacterEvent
+    data class UpdateCharacterMoonstones(val playerIndex: Int, val charIndex: Int, val stones: Int) : CharacterEvent
+
+    // Game Lifecycle
+    data object AbandonGame : CharacterEvent
 }

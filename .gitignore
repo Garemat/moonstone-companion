@@ -1,6 +1,7 @@
 *.iml
 .gradle
 
+
 /gradle/wrapper/gradle-wrapper.jar
 /app/build
 /local.properties
@@ -9,6 +10,9 @@
 /.idea/modules.xml
 /.idea/workspace.xml
 /.idea/navEditor.xml
+/.idea/gradle.xml
+/.idea/migrations.xml
+/.idea/deploymentTargetSelector.xml
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
@@ -17,6 +21,7 @@
 .cxx
 local.properties
 
-
+/app/src/main/assets/
+/app/src/main/res/drawable/
 /app/src/androidTest/java/com/garemat/moonstone_companion/ExampleInstrumentedTest.kt
 /app/src/test/java/com/garemat/moonstone_companion/ExampleUnitTest.kt

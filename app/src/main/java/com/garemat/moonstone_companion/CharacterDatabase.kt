@@ -9,11 +9,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Database(
-    entities = [Character::class, Troupe::class],
-    version = 4,
+    entities = [Character::class, Troupe::class, GameResult::class],
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -36,11 +35,13 @@ abstract class CharacterDatabase : RoomDatabase() {
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
+                        // Trigger immediate import on creation
                         prepopulate(context)
                     }
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)
+                        // Also ensure sync on open
                         prepopulate(context)
                     }
                 })

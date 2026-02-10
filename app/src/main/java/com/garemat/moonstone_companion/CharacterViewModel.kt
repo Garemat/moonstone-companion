@@ -1,14 +1,24 @@
 package com.garemat.moonstone_companion
 
 import android.app.Application
+import android.content.Context
 import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.ktor.client.*
+import io.ktor.client.engine.android.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.jsoup.Jsoup
 import java.util.UUID
 
 class CharacterViewModel(
@@ -16,18 +26,44 @@ class CharacterViewModel(
     private val dao: CharacterDAO
 ) : AndroidViewModel(application) {
 
+    private val prefs = application.getSharedPreferences("moonstone_prefs", Context.MODE_PRIVATE)
     private val nearbyManager = NearbyManager(application)
+    private val client = HttpClient(Android)
 
-    private val _state = MutableStateFlow(CharacterState())
+    // Persistent Unique Device ID for session rejoin
+    private val persistentDeviceId: String = prefs.getString("persistent_device_id", null) ?: run {
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("persistent_device_id", newId).apply()
+        newId
+    }
+
+    private val _state = MutableStateFlow(CharacterState(
+        name = prefs.getString("player_name", "") ?: "",
+        deviceId = persistentDeviceId,
+        theme = AppTheme.valueOf(prefs.getString("app_theme", AppTheme.DEFAULT.name) ?: AppTheme.DEFAULT.name),
+        hasSeenHomeTutorial = prefs.getBoolean("has_seen_home_tutorial", false),
+        hasSeenTroupesTutorial = prefs.getBoolean("has_seen_troupes_tutorial", false),
+        hasSeenCharactersTutorial = prefs.getBoolean("has_seen_characters_tutorial", false),
+        hasSeenRulesTutorial = prefs.getBoolean("has_seen_rules_tutorial", false),
+        hasSeenSettingsTutorial = prefs.getBoolean("has_seen_settings_tutorial", false),
+        hasSeenGameSetupTutorial = prefs.getBoolean("has_seen_game_setup_tutorial", false),
+        newsItems = loadCachedNews()
+    ))
+    
     private val _characters = dao.getCharactersOrderedByName()
     private val _troupes = dao.getTroupes()
+    val gameResults = dao.getGameResults().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Rules logic
+    private val _rules = MutableStateFlow<List<RuleSection>>(emptyList())
+    val rules = _rules.asStateFlow()
 
     val state = combine(_state, _characters, _troupes) { state, characters, troupes ->
         state.copy(
             characters = characters,
             troupes = troupes
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CharacterState())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), _state.value)
 
     val discoveredEndpoints = nearbyManager.discoveredEndpoints
 
@@ -39,9 +75,12 @@ class CharacterViewModel(
 
     sealed class UiEvent {
         data object GameStarted : UiEvent()
+        data class TroupeCreated(val troupe: Troupe, val playerIndex: Int?) : UiEvent()
     }
 
     init {
+        loadRules()
+        fetchNews()
         nearbyManager.setPayloadListener { endpointId, message ->
             handleSessionMessage(endpointId, message)
         }
@@ -49,8 +88,95 @@ class CharacterViewModel(
         nearbyManager.setConnectionListener { endpointId ->
             val currentSession = _state.value.gameSession
             if (currentSession == null || !currentSession.isHost) {
-                val joinMsg = SessionMessage.JoinRequest(_state.value.name.ifEmpty { "Player" })
+                val joinMsg = SessionMessage.JoinRequest(
+                    playerName = _state.value.name.ifEmpty { "Player" },
+                    deviceId = persistentDeviceId
+                )
                 nearbyManager.sendPayload(endpointId, MessageParser.encode(joinMsg))
+            }
+        }
+    }
+
+    private fun loadRules() {
+        viewModelScope.launch {
+            try {
+                val jsonString = getApplication<Application>().assets.open("rules.json").bufferedReader().use { it.readText() }
+                val loadedRules = Json.decodeFromString<List<RuleSection>>(jsonString)
+                _rules.value = loadedRules
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    // --- News Feed Logic ---
+
+    private fun loadCachedNews(): List<NewsItem> {
+        val cached = prefs.getString("cached_news", null) ?: return emptyList()
+        return try { Json.decodeFromString(cached) } catch (e: Exception) { emptyList() }
+    }
+
+    private fun fetchNews() {
+        viewModelScope.launch {
+            _state.update { it.copy(isFetchingNews = true) }
+            try {
+                val baseUrl = "https://www.moonstonethegame.com"
+                val latestUrl = "$baseUrl/latest"
+                val response = withContext(Dispatchers.IO) { client.get(latestUrl).bodyAsText() }
+                val doc = Jsoup.parse(response)
+                
+                val articleElements = doc.select(".summary-item").filter { 
+                    val href = it.select("a").attr("href")
+                    href.startsWith("/latest/") && !href.contains("?")
+                }.take(10)
+                
+                val currentItems = _state.value.newsItems
+                
+                if (articleElements.isNotEmpty()) {
+                    val firstUrlRel = articleElements[0].select("a").attr("href")
+                    val firstUrl = if (firstUrlRel.startsWith("http")) firstUrlRel else baseUrl + firstUrlRel
+                    
+                    if (currentItems.isNotEmpty() && currentItems[0].url == firstUrl) {
+                        _state.update { it.copy(isFetchingNews = false) }
+                        return@launch
+                    }
+
+                    val newItems = articleElements.map { element ->
+                        val urlRel = element.select("a").attr("href")
+                        val url = if (urlRel.startsWith("http")) urlRel else baseUrl + urlRel
+                        
+                        val title = element.select(".summary-title").text().ifEmpty { 
+                            element.select("a").text() 
+                        }
+                        val date = element.select(".summary-metadata-item--date").text().ifEmpty { "Recently" }
+                        val summary = element.select(".summary-excerpt").text()
+                        
+                        val img = element.select("img")
+                        var imageUrl = img.attr("data-src").ifEmpty { 
+                            img.attr("src").ifEmpty { 
+                                img.attr("data-image") 
+                            }
+                        }
+                        
+                        if (imageUrl.isNotEmpty() && !imageUrl.startsWith("http")) {
+                            imageUrl = baseUrl + if (imageUrl.startsWith("/")) "" else "/" + imageUrl
+                        }
+
+                        NewsItem(
+                            title = title,
+                            url = url,
+                            date = date,
+                            imageUrl = imageUrl.ifEmpty { null },
+                            summary = summary.ifEmpty { null }
+                        )
+                    }
+
+                    _state.update { it.copy(newsItems = newItems, isFetchingNews = false) }
+                    prefs.edit().putString("cached_news", Json.encodeToString(newItems)).apply()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _state.update { it.copy(isFetchingNews = false) }
             }
         }
     }
@@ -60,17 +186,52 @@ class CharacterViewModel(
     var newTroupeName by mutableStateOf("")
     var selectedTroupeFaction by mutableStateOf(Faction.COMMONWEALTH)
     var selectedCharacterIds by mutableStateOf(setOf<Int>())
+    var autoSelectMembers by mutableStateOf(false)
+    var pendingTroupePlayerIndex by mutableStateOf<Int?>(null)
 
     // Active Game State
     private val _activeTroupes = MutableStateFlow<List<Troupe>>(emptyList())
     
-    val playersWithCharacters = _activeTroupes.flatMapLatest { troupes ->
+    val playersWithCharacters = state.flatMapLatest { currentState ->
+        val troupes = currentState.activeTroupes
         if (troupes.isEmpty()) return@flatMapLatest flowOf(emptyList<Pair<Troupe, List<Character>>>())
         
         val flows = troupes.map { troupe ->
             dao.getCharactersByIds(troupe.characterIds).map { troupe to it }
         }
-        combine(flows) { it.toList() }
+        combine(flows) { troupePairs ->
+            troupePairs.toList().map { (troupe, characters) ->
+                val summonIds = characters.flatMap { it.summonsCharacterIds }
+                if (summonIds.isNotEmpty()) {
+                    val allCharacters = currentState.characters
+                    val currentIdsInTroupe = characters.map { it.id }.toSet()
+                    
+                    val summonedCharacters = summonIds.filter { sId ->
+                        !currentIdsInTroupe.contains(sId)
+                    }.mapNotNull { sId ->
+                        allCharacters.find { it.id == sId }
+                    }
+                    
+                    troupe to (characters + summonedCharacters)
+                } else {
+                    troupe to characters
+                }
+            }
+        }
+    }.onEach { players ->
+        if (players.isNotEmpty() && _state.value.characterPlayStates.isEmpty()) {
+            val initialStates = mutableMapOf<String, CharacterPlayState>()
+            players.forEachIndexed { pIdx, (troupe, characters) ->
+                characters.forEachIndexed { cIdx, character ->
+                    val replenishedEnergy = calculateReplenishedEnergy(character, character.health)
+                    initialStates["${pIdx}_${cIdx}"] = CharacterPlayState(
+                        currentHealth = character.health,
+                        currentEnergy = replenishedEnergy
+                    )
+                }
+            }
+            _state.update { it.copy(characterPlayStates = initialStates, currentTurn = 1, turnHistory = emptyList()) }
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun onEvent(event: CharacterEvent) {
@@ -83,6 +244,7 @@ class CharacterViewModel(
                 newTroupeName = event.troupe.troupeName
                 selectedTroupeFaction = event.troupe.faction
                 selectedCharacterIds = event.troupe.characterIds.toSet()
+                autoSelectMembers = event.troupe.autoSelectMembers
             }
             CharacterEvent.SaveTroupe -> {
                 val troupe = Troupe(
@@ -90,9 +252,15 @@ class CharacterViewModel(
                     troupeName = newTroupeName,
                     faction = selectedTroupeFaction,
                     characterIds = selectedCharacterIds.toList(),
-                    shareCode = ""
+                    shareCode = "",
+                    autoSelectMembers = autoSelectMembers
                 )
-                viewModelScope.launch { dao.upsertTroupe(troupe) }
+                viewModelScope.launch { 
+                    val id = dao.upsertTroupe(troupe)
+                    val savedTroupe = troupe.copy(id = id.toInt())
+                    _uiEvent.emit(UiEvent.TroupeCreated(savedTroupe, pendingTroupePlayerIndex))
+                    pendingTroupePlayerIndex = null
+                }
                 resetNewTroupeFields()
             }
             is CharacterEvent.SortCharacters -> {
@@ -103,13 +271,271 @@ class CharacterViewModel(
             }
             is CharacterEvent.UpdateUserName -> {
                 _state.update { it.copy(name = event.name) }
+                prefs.edit().putString("player_name", event.name).apply()
+            }
+            is CharacterEvent.ChangeTheme -> {
+                _state.update { it.copy(theme = event.theme) }
+                prefs.edit().putString("app_theme", event.theme.name).apply()
+            }
+            is CharacterEvent.SetHasSeenTutorial -> {
+                val prefKey = "has_seen_${event.tutorialKey}_tutorial"
+                _state.update { 
+                    when(event.tutorialKey) {
+                        "home" -> it.copy(hasSeenHomeTutorial = event.seen)
+                        "troupes" -> it.copy(hasSeenTroupesTutorial = event.seen)
+                        "characters" -> it.copy(hasSeenCharactersTutorial = event.seen)
+                        "rules" -> it.copy(hasSeenRulesTutorial = event.seen)
+                        "settings" -> it.copy(hasSeenSettingsTutorial = event.seen)
+                        "game_setup" -> it.copy(hasSeenGameSetupTutorial = event.seen)
+                        else -> it
+                    }
+                }
+                prefs.edit().putBoolean(prefKey, event.seen).apply()
+            }
+            
+            CharacterEvent.RefreshNews -> {
+                fetchNews()
+            }
+
+            // Gameplay Events
+            is CharacterEvent.UpdateCharacterHealth -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(currentHealth = event.health) 
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, health = event.health))
+            }
+            is CharacterEvent.UpdateCharacterEnergy -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(currentEnergy = event.energy) 
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, energy = event.energy))
+            }
+            is CharacterEvent.ToggleAbilityUsed -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    val newAbilities = it.usedAbilities.toMutableMap()
+                    newAbilities[event.abilityName] = event.used
+                    it.copy(usedAbilities = newAbilities)
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, abilityName = event.abilityName, abilityUsed = event.used))
+            }
+            is CharacterEvent.ToggleCharacterFlipped -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(isFlipped = event.flipped) 
+                }
+            }
+            is CharacterEvent.ToggleCharacterExpanded -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(isExpanded = event.expanded) 
+                }
+            }
+            CharacterEvent.ResetGamePlayState -> {
+                _state.update { it.copy(characterPlayStates = emptyMap(), currentTurn = 1, turnHistory = emptyList(), winnerName = null, isTie = false) }
+            }
+            CharacterEvent.NextTurn -> {
+                handleReadyAction(GameAction.NEXT_TURN)
+            }
+            CharacterEvent.RewindTurn -> {
+                handleReadyAction(GameAction.REWIND)
+            }
+            is CharacterEvent.UpdateCharacterMoonstones -> {
+                updateCharacterState(event.playerIndex, event.charIndex) { 
+                    it.copy(moonstones = event.stones) 
+                }
+                broadcastGameplayUpdate(SessionMessage.GameplayUpdate(event.playerIndex, event.charIndex, moonstones = event.stones))
+            }
+            CharacterEvent.AbandonGame -> {
+                _state.update { it.copy(
+                    activeTroupes = emptyList(),
+                    characterPlayStates = emptyMap(),
+                    currentTurn = 1,
+                    gameSession = null,
+                    turnHistory = emptyList(),
+                    winnerName = null,
+                    isTie = false
+                )}
+                nearbyManager.stopAll()
             }
             else -> {}
         }
     }
 
+    private fun updateCharacterState(playerIndex: Int, charIndex: Int, update: (CharacterPlayState) -> CharacterPlayState) {
+        val key = "${playerIndex}_$charIndex"
+        _state.update { currentState ->
+            val currentPlayStates = currentState.characterPlayStates.toMutableMap()
+            val charState = currentPlayStates[key] ?: CharacterPlayState(currentHealth = 0)
+            currentPlayStates[key] = update(charState)
+            currentState.copy(characterPlayStates = currentPlayStates)
+        }
+    }
+
+    private fun calculateReplenishedEnergy(character: Character, currentHealth: Int): Int {
+        if (currentHealth <= 0) return 0
+        val thresholdsMet = character.energyTrack.count { currentHealth >= it }
+        return thresholdsMet
+    }
+
+    private fun handleReadyAction(action: GameAction) {
+        val session = _state.value.gameSession ?: run {
+            if (action == GameAction.NEXT_TURN) attemptNextTurn() else handleRewindTurn()
+            return
+        }
+
+        val deviceId = persistentDeviceId
+        val isReady = when(action) {
+            GameAction.NEXT_TURN -> !_state.value.readyForNextTurn.contains(deviceId)
+            GameAction.REWIND -> !_state.value.readyForRewind.contains(deviceId)
+        }
+
+        val readyMsg = SessionMessage.ReadyForAction(action, deviceId, isReady)
+        nearbyManager.sendPayloadToAll(MessageParser.encode(readyMsg))
+        handleSessionMessage("LOCAL", MessageParser.encode(readyMsg))
+    }
+
+    private fun attemptNextTurn() {
+        val currentState = _state.value
+        val playersData = playersWithCharacters.value
+        if (playersData.isEmpty()) return
+
+        // Victory Logic Check
+        if (currentState.currentTurn >= 4) {
+            val playerStones = playersData.mapIndexed { pIdx, (troupe, characters) ->
+                val total = characters.indices.sumOf { cIdx ->
+                    currentState.characterPlayStates["${pIdx}_${cIdx}"]?.moonstones ?: 0
+                }
+                troupe.troupeName to total
+            }
+
+            val maxStones = playerStones.maxOf { it.second }
+            val winners = playerStones.mapIndexedNotNull { index, pair -> if (pair.second == maxStones) index else null }
+
+            if (winners.size == 1) {
+                // Clear winner found
+                val winnerIdx = winners[0]
+                _state.update { it.copy(winnerName = playerStones[winnerIdx].first) }
+                saveGameResult(winnerIdx)
+                broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
+                return
+            } else if (currentState.currentTurn == 5) {
+                // End of sudden death with no clear winner
+                _state.update { it.copy(isTie = true) }
+                saveGameResult(null)
+                broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
+                return
+            }
+            // If it's round 4 and tie, progress to Sudden Death (Round 5)
+        }
+
+        handleNextTurn()
+    }
+
+    private fun saveGameResult(winnerIndex: Int?) {
+        val currentState = _state.value
+        val playersData = playersWithCharacters.value
+        if (playersData.isEmpty()) return
+
+        viewModelScope.launch {
+            val session = currentState.gameSession
+            val playerStats = playersData.mapIndexed { pIdx, (troupe, characters) ->
+                val charStats = characters.mapIndexed { cIdx, character ->
+                    val playState = currentState.characterPlayStates["${pIdx}_${cIdx}"]
+                    CharacterGameStat(
+                        characterId = character.id,
+                        name = character.name,
+                        stones = playState?.moonstones ?: 0,
+                        died = (playState?.currentHealth ?: 0) <= 0
+                    )
+                }
+                
+                val pName = if (session != null) {
+                    session.players.getOrNull(pIdx)?.name
+                } else {
+                    if (pIdx == 0) currentState.name.ifEmpty { null } else "Player ${pIdx + 1}"
+                }
+
+                PlayerStat(
+                    playerName = pName,
+                    troupeName = troupe.troupeName,
+                    faction = troupe.faction,
+                    totalStones = charStats.sumOf { it.stones },
+                    characterStats = charStats
+                )
+            }
+
+            val gameResult = GameResult(
+                timestamp = System.currentTimeMillis(),
+                playerStats = playerStats,
+                winnerIndex = winnerIndex
+            )
+            dao.upsertGameResult(gameResult)
+        }
+    }
+
+    private fun handleNextTurn() {
+        val currentState = _state.value
+        val playersData = playersWithCharacters.value
+        if (playersData.isEmpty()) return
+
+        val updatedHistory = currentState.turnHistory + listOf(currentState.characterPlayStates)
+        val newPlayStates = currentState.characterPlayStates.toMutableMap()
+        
+        playersData.forEachIndexed { pIdx, (_, characters) ->
+            characters.forEachIndexed { cIdx, character ->
+                val key = "${pIdx}_$cIdx"
+                val playState = newPlayStates[key]
+                if (playState != null && playState.currentHealth > 0) {
+                    val replenishedEnergy = calculateReplenishedEnergy(character, playState.currentHealth)
+                    newPlayStates[key] = playState.copy(
+                        currentEnergy = replenishedEnergy,
+                        usedAbilities = emptyMap()
+                    )
+                }
+            }
+        }
+
+        _state.update { it.copy(
+            characterPlayStates = newPlayStates,
+            currentTurn = it.currentTurn + 1,
+            turnHistory = updatedHistory,
+            readyForNextTurn = emptySet(),
+            readyForRewind = emptySet()
+        ) }
+
+        broadcastTurnUpdate(_state.value.currentTurn, newPlayStates)
+    }
+
+    private fun handleRewindTurn() {
+        _state.update { currentState ->
+            if (currentState.turnHistory.isEmpty()) return@update currentState
+            
+            val previousStates = currentState.turnHistory.last()
+            val newHistory = currentState.turnHistory.dropLast(1)
+            
+            currentState.copy(
+                characterPlayStates = previousStates,
+                currentTurn = (currentState.currentTurn - 1).coerceAtLeast(1),
+                turnHistory = newHistory,
+                readyForNextTurn = emptySet(),
+                readyForRewind = emptySet(),
+                winnerName = null,
+                isTie = false
+            )
+        }
+        
+        broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
+    }
+
     fun startNewGame(troupes: List<Troupe>) {
-        _activeTroupes.value = troupes
+        _state.update { it.copy(
+            characterPlayStates = emptyMap(), 
+            currentTurn = 1,
+            activeTroupes = troupes,
+            turnHistory = emptyList(),
+            readyForNextTurn = emptySet(),
+            readyForRewind = emptySet(),
+            winnerName = null,
+            isTie = false
+        ) }
     }
 
     fun saveTroupe(troupe: Troupe) {
@@ -129,6 +555,7 @@ class CharacterViewModel(
         newTroupeName = ""
         selectedTroupeFaction = Faction.COMMONWEALTH
         selectedCharacterIds = emptySet()
+        autoSelectMembers = false
     }
 
     fun generateFullShareCode(troupe: Troupe, characters: List<Character>): String {
@@ -141,7 +568,8 @@ class CharacterViewModel(
         val selectedCodes = troupe.characterIds.mapNotNull { id ->
             characters.find { it.id == id }?.shareCode
         }.joinToString("")
-        val rawCode = "${troupe.troupeName}|$factionCode$selectedCodes"
+        val autoSelectFlag = if (troupe.autoSelectMembers) "1" else "0"
+        val rawCode = "${troupe.troupeName}|$factionCode$autoSelectFlag$selectedCodes"
         return Base64.encodeToString(rawCode.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
     }
 
@@ -154,7 +582,6 @@ class CharacterViewModel(
             
             val name = parts[0]
             val codeBody = parts[1]
-            val characterCodes = codeBody.substring(1).chunked(3)
             val faction = when (codeBody[0]) {
                 'A' -> Faction.COMMONWEALTH
                 'B' -> Faction.DOMINION
@@ -162,16 +589,20 @@ class CharacterViewModel(
                 'D' -> Faction.SHADES
                 else -> return null
             }
+            val autoSelect = codeBody[1] == '1'
+            val characterCodes = codeBody.substring(2).chunked(3)
 
             val characterIds = characterCodes.mapNotNull { code ->
                 allCharacters.find { it.shareCode == code }?.id
             }
             
-            return Troupe(0, name, faction, characterIds, fullCode)
+            return Troupe(0, name, faction, characterIds, fullCode, autoSelectMembers = autoSelect)
         } catch (e: Exception) {
             return null
         }
     }
+
+    // --- Nearby Session Logic ---
 
     fun startHosting(hostName: String) {
         nearbyManager.stopAll()
@@ -179,7 +610,7 @@ class CharacterViewModel(
         val actualName = _state.value.name.ifEmpty { hostName }
         _state.update { it.copy(
             gameSession = GameSession(
-                players = listOf(GamePlayer(name = actualName, deviceId = "HOST")),
+                players = listOf(GamePlayer(name = actualName, deviceId = persistentDeviceId)),
                 isHost = true,
                 sessionId = sessionId
             )
@@ -211,12 +642,18 @@ class CharacterViewModel(
 
         when (message) {
             is SessionMessage.JoinRequest -> {
-                if (currentSession.isHost && currentSession.players.size < 4) {
-                    val newPlayer = GamePlayer(name = message.playerName, deviceId = endpointId)
-                    _state.update { it.copy(
-                        gameSession = currentSession.copy(players = currentSession.players + newPlayer)
-                    )}
-                    syncSessionToAll()
+                if (currentSession.isHost) {
+                    val existingPlayerIndex = currentSession.players.indexOfFirst { it.deviceId == message.deviceId }
+                    
+                    if (existingPlayerIndex != -1) {
+                        syncSessionToAll()
+                    } else if (currentSession.players.size < 4) {
+                        val newPlayer = GamePlayer(name = message.playerName, deviceId = message.deviceId)
+                        _state.update { it.copy(
+                            gameSession = currentSession.copy(players = currentSession.players + newPlayer)
+                        )}
+                        syncSessionToAll()
+                    }
                 }
             }
             is SessionMessage.SessionSync -> {
@@ -237,13 +674,7 @@ class CharacterViewModel(
                 )
                 
                 val updatedPlayers = currentSession.players.map { player ->
-                    val isTarget = if (currentSession.isHost) {
-                        player.deviceId == endpointId || (player.deviceId == "HOST" && message.deviceId == "HOST")
-                    } else {
-                        player.deviceId == message.deviceId
-                    }
-                    
-                    if (isTarget) {
+                    if (player.deviceId == message.deviceId) {
                         player.copy(troupe = newTroupe)
                     } else player
                 }
@@ -254,6 +685,70 @@ class CharacterViewModel(
                 val troupes = currentSession.players.mapNotNull { it.troupe }
                 startNewGame(troupes)
                 viewModelScope.launch { _uiEvent.emit(UiEvent.GameStarted) }
+            }
+            is SessionMessage.GameplayUpdate -> {
+                updateCharacterState(message.playerIndex, message.charIndex) { currentState ->
+                    var newState = currentState
+                    message.health?.let { newState = newState.copy(currentHealth = it) }
+                    message.energy?.let { newState = newState.copy(currentEnergy = it) }
+                    message.moonstones?.let { newState = newState.copy(moonstones = it) }
+                    message.abilityName?.let { name ->
+                        message.abilityUsed?.let { used ->
+                            val newAbilities = newState.usedAbilities.toMutableMap()
+                            newAbilities[name] = used
+                            newState = newState.copy(usedAbilities = newAbilities)
+                        }
+                    }
+                    newState
+                }
+                if (currentSession.isHost && endpointId != "LOCAL") {
+                    nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                }
+            }
+            is SessionMessage.TurnUpdate -> {
+                _state.update { currentState ->
+                    val isNextTurn = message.turn > currentState.currentTurn
+                    val isRewind = message.turn < currentState.currentTurn
+                    
+                    val newHistory = when {
+                        isNextTurn -> currentState.turnHistory + listOf(currentState.characterPlayStates)
+                        isRewind -> currentState.turnHistory.dropLast(1)
+                        else -> currentState.turnHistory
+                    }
+
+                    currentState.copy(
+                        currentTurn = message.turn,
+                        characterPlayStates = message.characterPlayStates,
+                        turnHistory = newHistory,
+                        readyForNextTurn = emptySet(),
+                        readyForRewind = emptySet()
+                    )
+                }
+                if (currentSession.isHost && endpointId != "LOCAL") {
+                    nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                }
+            }
+            is SessionMessage.ReadyForAction -> {
+                _state.update { currentState ->
+                    val currentReadySet = if (message.action == GameAction.NEXT_TURN) currentState.readyForNextTurn else currentState.readyForRewind
+                    val newReadySet = if (message.isReady) currentReadySet + message.deviceId else currentReadySet - message.deviceId
+                    
+                    if (message.action == GameAction.NEXT_TURN) currentState.copy(readyForNextTurn = newReadySet)
+                    else currentState.copy(readyForRewind = newReadySet)
+                }
+
+                if (currentSession.isHost) {
+                    val currentState = _state.value
+                    val readySet = if (message.action == GameAction.NEXT_TURN) currentState.readyForNextTurn else currentState.readyForRewind
+                    val allReady = currentSession.players.all { readySet.contains(it.deviceId) }
+                    
+                    if (allReady) {
+                        if (message.action == GameAction.NEXT_TURN) attemptNextTurn()
+                        else handleRewindTurn()
+                    } else if (endpointId != "LOCAL") {
+                        nearbyManager.sendPayloadToAll(MessageParser.encode(message))
+                    }
+                }
             }
             else -> {}
         }
@@ -269,10 +764,9 @@ class CharacterViewModel(
 
     fun broadcastTroupeSelection(troupe: Troupe) {
         val session = _state.value.gameSession ?: return
-        val deviceId = if (session.isHost) "HOST" else "CLIENT" 
         
         val msg = SessionMessage.TroupeSelected(
-            deviceId = deviceId,
+            deviceId = persistentDeviceId,
             troupeName = troupe.troupeName,
             faction = troupe.faction,
             characterIds = troupe.characterIds
@@ -281,17 +775,28 @@ class CharacterViewModel(
         
         if (session.isHost) {
             val updatedPlayers = session.players.map { 
-                if (it.deviceId == "HOST") it.copy(troupe = troupe) else it 
+                if (it.deviceId == persistentDeviceId) it.copy(troupe = troupe) else it 
             }
             _state.update { it.copy(gameSession = session.copy(players = updatedPlayers)) }
+            handleSessionMessage("LOCAL", json)
             nearbyManager.sendPayloadToAll(json)
         } else {
             val updatedPlayers = session.players.map { 
-                if (it.name == state.value.name || it.name == _state.value.name) it.copy(troupe = troupe) else it
+                if (it.deviceId == persistentDeviceId) it.copy(troupe = troupe) else it
             }
             _state.update { it.copy(gameSession = session.copy(players = updatedPlayers)) }
             nearbyManager.sendPayloadToAll(json) 
         }
+    }
+
+    fun broadcastGameplayUpdate(update: SessionMessage.GameplayUpdate) {
+        val session = _state.value.gameSession ?: return
+        nearbyManager.sendPayloadToAll(MessageParser.encode(update))
+    }
+
+    fun broadcastTurnUpdate(turn: Int, states: Map<String, CharacterPlayState>) {
+        val session = _state.value.gameSession ?: return
+        nearbyManager.sendPayloadToAll(MessageParser.encode(SessionMessage.TurnUpdate(turn, states)))
     }
 
     fun broadcastStartGame() {
@@ -299,7 +804,7 @@ class CharacterViewModel(
         if (session.isHost) {
             val msg = SessionMessage.StartGame
             nearbyManager.sendPayloadToAll(MessageParser.encode(msg))
-            handleSessionMessage("HOST", MessageParser.encode(msg))
+            handleSessionMessage("LOCAL", MessageParser.encode(msg))
         }
     }
 

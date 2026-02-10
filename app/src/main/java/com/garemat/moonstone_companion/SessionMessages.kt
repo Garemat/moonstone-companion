@@ -7,7 +7,7 @@ import kotlinx.serialization.json.Json
 @Serializable
 sealed class SessionMessage {
     @Serializable
-    data class JoinRequest(val playerName: String) : SessionMessage()
+    data class JoinRequest(val playerName: String, val deviceId: String) : SessionMessage()
     
     @Serializable
     data class Welcome(val deviceId: String) : SessionMessage()
@@ -25,6 +25,31 @@ sealed class SessionMessage {
     
     @Serializable
     data object StartGame : SessionMessage()
+
+    @Serializable
+    data class GameplayUpdate(
+        val playerIndex: Int,
+        val charIndex: Int,
+        val health: Int? = null,
+        val energy: Int? = null,
+        val moonstones: Int? = null,
+        val abilityName: String? = null,
+        val abilityUsed: Boolean? = null
+    ) : SessionMessage()
+
+    @Serializable
+    data class TurnUpdate(
+        val turn: Int, 
+        val characterPlayStates: Map<String, CharacterPlayState>
+    ) : SessionMessage()
+
+    @Serializable
+    data class ReadyForAction(val action: GameAction, val deviceId: String, val isReady: Boolean) : SessionMessage()
+}
+
+@Serializable
+enum class GameAction {
+    NEXT_TURN, REWIND
 }
 
 object MessageParser {

@@ -24,7 +24,7 @@ interface CharacterDAO {
 
     // Troupe Operations
     @Upsert
-    suspend fun upsertTroupe(troupe: Troupe)
+    suspend fun upsertTroupe(troupe: Troupe): Long
 
     @Delete
     suspend fun deleteTroupe(troupe: Troupe)
@@ -34,4 +34,11 @@ interface CharacterDAO {
 
     @Query("SELECT * FROM troupe WHERE shareCode = :code")
     suspend fun getTroupeByShareCode(code: String): Troupe?
+
+    // Game Result Operations
+    @Upsert
+    suspend fun upsertGameResult(result: GameResult)
+
+    @Query("SELECT * FROM gameresult ORDER BY timestamp DESC")
+    fun getGameResults(): Flow<List<GameResult>>
 }

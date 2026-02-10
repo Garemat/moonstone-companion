@@ -1,57 +1,67 @@
 package com.garemat.moonstone_companion.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
+import com.garemat.moonstone_companion.AppTheme
+
+val LocalAppTheme = staticCompositionLocalOf { AppTheme.DEFAULT }
+
+private val MoonstoneColorScheme = lightColorScheme(
+    primary = Color(0xFF2C1810), // InkColor
+    secondary = Color(0xFF8B4513), // RuleAccentColor
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFF4E4BC), // ParchmentColor
+    onPrimaryContainer = Color(0xFF2C1810), // InkColor
+    secondaryContainer = Color(0xFFEADBB0), // Themed unselected background
+    onSecondaryContainer = Color(0xFF2C1810),
+    surface = Color(0xFFF4E4BC),
+    onSurface = Color(0xFF2C1810),
+    surfaceVariant = Color(0xFFEADBB0),
+    onSurfaceVariant = Color(0xFF2C1810),
+    background = Color(0xFFF4E4BC),
+    onBackground = Color(0xFF2C1810),
+    outline = Color(0xFF2C1810).copy(alpha = 0.5f)
+)
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = Color(0xFFD0BCFF),
+    secondary = Color(0xFFCCC2DC),
+    tertiary = Color(0xFFEFB8C8)
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primary = Color(0xFF6650a4),
+    secondary = Color(0xFF625b71),
+    tertiary = Color(0xFF7D5260)
 )
 
 @Composable
 fun MoonstonecompanionTheme(
+    appTheme: AppTheme = AppTheme.DEFAULT,
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    val colorScheme = when (appTheme) {
+        AppTheme.MOONSTONE -> MoonstoneColorScheme
+        AppTheme.DEFAULT -> if (darkTheme) DarkColorScheme else LightColorScheme
+    }
+    
+    val typography = when (appTheme) {
+        AppTheme.MOONSTONE -> MoonstoneTypography
+        AppTheme.DEFAULT -> DefaultTypography
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    CompositionLocalProvider(LocalAppTheme provides appTheme) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = typography,
+            content = content
+        )
+    }
 }
