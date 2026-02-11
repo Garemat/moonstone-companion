@@ -1,7 +1,11 @@
 package com.garemat.moonstone_companion.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +13,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -26,9 +31,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -64,10 +72,21 @@ fun ActiveGameScreen(
 
     val stateRef = rememberUpdatedState(state)
 
+    // Side Drawer State
+    var isDrawerOpen by rememberSaveable { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
                 CenterAlignedTopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { isDrawerOpen = !isDrawerOpen }) {
+                            Icon(
+                                if (isDrawerOpen) Icons.Default.MenuOpen else Icons.Default.Menu,
+                                contentDescription = "Toggle Character Drawer"
+                            )
+                        }
+                    },
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // Rewind Section
@@ -226,80 +245,115 @@ fun ActiveGameScreen(
                 val currentPair = players.getOrNull(pageIndex)
                 if (currentPair != null) {
                     val characters = currentPair.second
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        itemsIndexed(characters) { charIndex, character ->
-                            val stateKey = "" + pageIndex + "_" + charIndex
-                            val playState = state.characterPlayStates[stateKey] ?: CharacterPlayState(currentHealth = character.health)
+                    val listState = rememberLazyListState()
 
-                            DisposableEffect(stateKey) {
-                                onDispose { characterBounds.remove(stateKey) }
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            // Single Drawer definition inside Pager page
+                            AnimatedVisibility(
+                                visible = isDrawerOpen,
+                                enter = expandHorizontally(),
+                                exit = shrinkHorizontally()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .width(70.dp)
+                                        .fillMaxHeight()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
+                                        .padding(vertical = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    characters.forEachIndexed { charIndex, character ->
+                                        CharacterPortraitJump(
+                                            character = character,
+                                            onClick = {
+                                                scope.launch {
+                                                    listState.animateScrollToItem(charIndex)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                             }
 
-                            Box(
-                                modifier = Modifier.onGloballyPositioned { 
-                                    characterBounds[stateKey] = it.boundsInWindow()
-                                }
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                CharacterGameCard(
-                                    character = character,
-                                    currentHealth = playState.currentHealth,
-                                    currentEnergy = playState.currentEnergy,
-                                    moonstones = playState.moonstones,
-                                    isExpanded = playState.isExpanded,
-                                    isFlipped = playState.isFlipped,
-                                    usedAbilities = playState.usedAbilities,
-                                    isEditable = true, // We allow interaction on all tabs, or check deviceId if strict
-                                    draggingStoneIndex = if (draggingStoneSource is StoneSource.Character && 
-                                        (draggingStoneSource as StoneSource.Character).playerIndex == pageIndex && 
-                                        (draggingStoneSource as StoneSource.Character).charIndex == charIndex) draggingStoneIndex else -1,
-                                    onHealthChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterHealth(pageIndex, charIndex, it)) },
-                                    onEnergyChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterEnergy(pageIndex, charIndex, it)) },
-                                    onExpandToggle = { viewModel.onEvent(CharacterEvent.ToggleCharacterExpanded(pageIndex, charIndex, !playState.isExpanded)) },
-                                    onFlippedChange = { viewModel.onEvent(CharacterEvent.ToggleCharacterFlipped(pageIndex, charIndex, it)) },
-                                    onAbilityToggle = { abilityName, used ->
-                                        viewModel.onEvent(CharacterEvent.ToggleAbilityUsed(pageIndex, charIndex, abilityName, used))
-                                    },
-                                    onStoneDragStart = { index, globalPos ->
-                                        draggingStoneIndex = index
-                                        draggingStoneSource = StoneSource.Character(pageIndex, charIndex)
-                                        dragPosition = globalPos
-                                    },
-                                    onStoneDrag = { amount -> dragPosition += amount },
-                                    onStoneDragEnd = {
-                                        val source = draggingStoneSource as? StoneSource.Character
-                                        if (source != null) {
-                                            val currentState = stateRef.value
-                                            
-                                            if (potBounds.value?.contains(dragPosition) == true) {
-                                                val sourceStones = currentState.characterPlayStates["" + source.playerIndex + "_" + source.charIndex]?.moonstones ?: 0
-                                                if (sourceStones > 0) {
-                                                    viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
-                                                }
-                                            } 
-                                            else {
-                                                val dropTarget = characterBounds.entries.find { it.value.contains(dragPosition) }
-                                                if (dropTarget != null) {
-                                                    val (targetPIdx, targetCIdx) = dropTarget.key.split("_").map { it.toInt() }
-                                                    if (targetPIdx != source.playerIndex || targetCIdx != source.charIndex) {
+                                itemsIndexed(characters) { charIndex, character ->
+                                    val stateKey = "" + pageIndex + "_" + charIndex
+                                    val playState = state.characterPlayStates[stateKey] ?: CharacterPlayState(currentHealth = character.health)
+
+                                    DisposableEffect(stateKey) {
+                                        onDispose { characterBounds.remove(stateKey) }
+                                    }
+
+                                    Box(
+                                        modifier = Modifier.onGloballyPositioned { 
+                                            characterBounds[stateKey] = it.boundsInWindow()
+                                        }
+                                    ) {
+                                        CharacterGameCard(
+                                            character = character,
+                                            currentHealth = playState.currentHealth,
+                                            currentEnergy = playState.currentEnergy,
+                                            moonstones = playState.moonstones,
+                                            isExpanded = playState.isExpanded,
+                                            isFlipped = playState.isFlipped,
+                                            usedAbilities = playState.usedAbilities,
+                                            isEditable = true,
+                                            draggingStoneIndex = if (draggingStoneSource is StoneSource.Character && 
+                                                (draggingStoneSource as StoneSource.Character).playerIndex == pageIndex && 
+                                                (draggingStoneSource as StoneSource.Character).charIndex == charIndex) draggingStoneIndex else -1,
+                                            onHealthChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterHealth(pageIndex, charIndex, it)) },
+                                            onEnergyChange = { viewModel.onEvent(CharacterEvent.UpdateCharacterEnergy(pageIndex, charIndex, it)) },
+                                            onExpandToggle = { viewModel.onEvent(CharacterEvent.ToggleCharacterExpanded(pageIndex, charIndex, !playState.isExpanded)) },
+                                            onFlippedChange = { viewModel.onEvent(CharacterEvent.ToggleCharacterFlipped(pageIndex, charIndex, it)) },
+                                            onAbilityToggle = { abilityName, used ->
+                                                viewModel.onEvent(CharacterEvent.ToggleAbilityUsed(pageIndex, charIndex, abilityName, used))
+                                            },
+                                            onStoneDragStart = { index, globalPos ->
+                                                draggingStoneIndex = index
+                                                draggingStoneSource = StoneSource.Character(pageIndex, charIndex)
+                                                dragPosition = globalPos
+                                            },
+                                            onStoneDrag = { amount -> dragPosition += amount },
+                                            onStoneDragEnd = {
+                                                val source = draggingStoneSource as? StoneSource.Character
+                                                if (source != null) {
+                                                    val currentState = stateRef.value
+                                                    
+                                                    if (potBounds.value?.contains(dragPosition) == true) {
                                                         val sourceStones = currentState.characterPlayStates["" + source.playerIndex + "_" + source.charIndex]?.moonstones ?: 0
-                                                        val targetStones = currentState.characterPlayStates[dropTarget.key]?.moonstones ?: 0
-                                                        
-                                                        if (targetStones < 7) {
+                                                        if (sourceStones > 0) {
                                                             viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
-                                                            viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(targetPIdx, targetCIdx, targetStones + 1))
+                                                        }
+                                                    } 
+                                                    else {
+                                                        val dropTarget = characterBounds.entries.find { it.value.contains(dragPosition) }
+                                                        if (dropTarget != null) {
+                                                            val (targetPIdx, targetCIdx) = dropTarget.key.split("_").map { it.toInt() }
+                                                            if (targetPIdx != source.playerIndex || targetCIdx != source.charIndex) {
+                                                                val sourceStones = currentState.characterPlayStates["" + source.playerIndex + "_" + source.charIndex]?.moonstones ?: 0
+                                                                val targetStones = currentState.characterPlayStates[dropTarget.key]?.moonstones ?: 0
+                                                                
+                                                                if (targetStones < 7) {
+                                                                    viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(source.playerIndex, source.charIndex, sourceStones - 1))
+                                                                    viewModel.onEvent(CharacterEvent.UpdateCharacterMoonstones(targetPIdx, targetCIdx, targetStones + 1))
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
+                                                draggingStoneSource = null
+                                                draggingStoneIndex = -1
                                             }
-                                        }
-                                        draggingStoneSource = null
-                                        draggingStoneIndex = -1
+                                        )
                                     }
-                                )
+                                }
                             }
                         }
                     }
@@ -358,6 +412,43 @@ fun ActiveGameScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun CharacterPortraitJump(
+    character: Character,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val imageRes = remember(character.imageName) { 
+        if (character.imageName != null) 
+            context.resources.getIdentifier(character.imageName.substringBeforeLast("."), "drawable", context.packageName) 
+        else 0 
+    }
+
+    Box(
+        modifier = Modifier
+            .size(50.dp)
+            .clip(CircleShape)
+            .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageRes != 0) {
+            Image(
+                painter = painterResource(id = imageRes),
+                contentDescription = character.name,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text(
+                text = character.name.take(1),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
     }
 }
 
