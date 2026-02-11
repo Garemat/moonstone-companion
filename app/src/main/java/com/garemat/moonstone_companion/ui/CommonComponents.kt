@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.garemat.moonstone_companion.*
 import com.garemat.moonstone_companion.ui.theme.LocalAppTheme
+import com.garemat.moonstone_companion.R
 
 // --- Base Utilities ---
 
@@ -375,21 +376,94 @@ fun AbilityTypeSeparator() {
 }
 
 @Composable
-fun ModifierDisplay(character: Character, isOffense: Boolean, modifier: Modifier = Modifier) {
-    val modifiers = mutableListOf<@Composable () -> Unit>()
-    fun addMod(prefix: String, value: String, offense: Boolean) {
-        if (value == "Null") modifiers.add { Row(verticalAlignment = Alignment.CenterVertically) { Text(prefix, fontSize = 11.sp, fontWeight = FontWeight.Bold); NullSymbol(size = 12.dp, modifier = Modifier.padding(horizontal = 1.dp)) } }
-        else if (value.toIntOrNull() != 0) modifiers.add { Text("$prefix${if (offense) "+" else "-"}$value", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
-    }
-    if (isOffense) { addMod("I", character.impactDamageBuff, true); addMod("S", character.slicingDamageBuff, true); addMod("P", character.piercingDamageBuff, true) }
-    else { if (character.allDamageMitigation != "0") addMod("ALL", character.allDamageMitigation, false) else { addMod("I", character.impactDamageMitigation, false); addMod("S", character.slicingDamageMitigation, false); addMod("P", character.piercingDamageMitigation, false) }; addMod("M", character.magicalDamageMitigation, false) }
-    if (modifiers.isNotEmpty() || (isOffense && character.dealsMagicalDamage)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
-            Icon(imageVector = if (isOffense) Icons.Default.Hardware else Icons.Default.Shield, contentDescription = null, modifier = Modifier.size(14.dp))
-            if (isOffense && character.dealsMagicalDamage) Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF00B0FF))
-            modifiers.forEachIndexed { i, m -> m(); if (i < modifiers.size - 1) Text(", ", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+fun MitigationIcon(resId: Int, value: String) {
+    if (resId != 0) {
+        Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+            Image(painter = painterResource(id = resId), contentDescription = null, modifier = Modifier.fillMaxSize())
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawLine(
+                    color = Color.Red.copy(alpha = 0.5f),
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 2.dp.toPx()
+                )
+            }
         }
-    } else Spacer(modifier = Modifier.height(14.dp))
+        Text(text = value, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 4.dp))
+    }
+}
+
+@Composable
+fun ModifierDisplay(character: Character, isOffense: Boolean, modifier: Modifier = Modifier) {
+    val appTheme = LocalAppTheme.current
+    val isMoonstone = appTheme == AppTheme.MOONSTONE
+
+    if (isMoonstone) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+            if (isOffense) {
+                val piercing = character.piercingDamageBuff.toIntOrNull() ?: 0
+                if (piercing != 0) {
+                    Image(painter = painterResource(id = R.drawable.piercing), contentDescription = "Piercing", modifier = Modifier.size(16.dp))
+                    Text(text = piercing.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 4.dp))
+                }
+
+                val impact = character.impactDamageBuff.toIntOrNull() ?: 0
+                if (impact != 0) {
+                    Image(painter = painterResource(id = R.drawable.impact), contentDescription = "Impact", modifier = Modifier.size(16.dp))
+                    Text(text = impact.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 4.dp))
+                }
+
+                val slicing = character.slicingDamageBuff.toIntOrNull() ?: 0
+                if (slicing != 0) {
+                    Image(painter = painterResource(id = R.drawable.slicing), contentDescription = "Slicing", modifier = Modifier.size(16.dp))
+                    Text(text = slicing.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 4.dp))
+                }
+
+                if (character.dealsMagicalDamage) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = "Magical", modifier = Modifier.size(14.dp), tint = Color(0xFF00B0FF))
+                }
+            } else {
+                val allMitigation = character.allDamageMitigation.toIntOrNull() ?: 0
+                if (allMitigation >= 1) {
+                    Image(painter = painterResource(id = R.drawable.alldamagemitigation), contentDescription = "All Mitigation", modifier = Modifier.size(16.dp))
+                    Text(text = allMitigation.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Icon(imageVector = Icons.Default.Shield, contentDescription = null, modifier = Modifier.size(14.dp))
+                    
+                    val piercing = character.piercingDamageMitigation.toIntOrNull() ?: 0
+                    if (piercing != 0) MitigationIcon(R.drawable.piercing, piercing.toString())
+
+                    val impact = character.impactDamageMitigation.toIntOrNull() ?: 0
+                    if (impact != 0) MitigationIcon(R.drawable.impact, impact.toString())
+
+                    val slicing = character.slicingDamageMitigation.toIntOrNull() ?: 0
+                    if (slicing != 0) MitigationIcon(R.drawable.slicing, slicing.toString())
+
+                    val magical = character.magicalDamageMitigation.toIntOrNull() ?: 0
+                    if (magical != 0) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "Magical Mitigation", modifier = Modifier.size(14.dp), tint = Color(0xFF00B0FF))
+                        Text(text = magical.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    } else {
+        val modifiers = mutableListOf<@Composable () -> Unit>()
+        fun addMod(prefix: String, value: String, offense: Boolean) {
+            if (value == "Null") modifiers.add { Row(verticalAlignment = Alignment.CenterVertically) { Text(prefix, fontSize = 11.sp, fontWeight = FontWeight.Bold); NullSymbol(size = 12.dp, modifier = Modifier.padding(horizontal = 1.dp)) } }
+            else if (value.toIntOrNull() != 0) modifiers.add { Text("$prefix${if (offense) "+" else "-"}$value", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        }
+        if (isOffense) { addMod("I", character.impactDamageBuff, true); addMod("S", character.slicingDamageBuff, true); addMod("P", character.piercingDamageBuff, true) }
+        else { if (character.allDamageMitigation != "0") addMod("ALL", character.allDamageMitigation, false) else { addMod("I", character.impactDamageMitigation, false); addMod("S", character.slicingDamageMitigation, false); addMod("P", character.piercingDamageMitigation, false) }; addMod("M", character.magicalDamageMitigation, false) }
+        
+        if (modifiers.isNotEmpty() || (isOffense && character.dealsMagicalDamage)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+                Icon(imageVector = if (isOffense) Icons.Default.Hardware else Icons.Default.Shield, contentDescription = null, modifier = Modifier.size(14.dp))
+                if (isOffense && character.dealsMagicalDamage) Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF00B0FF))
+                modifiers.forEachIndexed { i, m -> m(); if (i < modifiers.size - 1) Text(", ", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+            }
+        } else Spacer(modifier = Modifier.height(14.dp))
+    }
 }
 
 @Composable
