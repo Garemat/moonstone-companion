@@ -397,7 +397,7 @@ fun HealthTracker(totalHealth: Int, currentHealth: Int, energyTrack: List<Int>, 
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.Start), modifier = modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         for (i in 1..totalHealth) {
             val isLost = i > currentHealth; val isEnergy = energyTrack.contains(i)
-            Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(when { isLost -> Color.Transparent; isEnergy -> if (isEditable) Color(0xFF2196F3) else Color(0xFF90CAF9); else -> if (isEditable) Color(0xFF4CAF50) else Color(0xFFA5D6A7) }).border(1.dp, if (isEnergy) Color(0xFF1565C0) else Color.DarkGray, CircleShape).then(if (isEditable) Modifier.clickable { onHealthChange(if (currentHealth == i) i - 1 else i) } else Modifier), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(when { isLost -> Color.Transparent; isEnergy -> if (isEditable) Color(0xFF2196F3) else Color(0xFF90CAF9); else -> if (isEditable) Color(0xFF4CAF50) else Color(0xFFA5D6A7) }).border(1.dp, if (isEnergy) Color(0xFF1565C0) else Color.DarkGray, CircleShape).then(if (isEditable) Modifier.clickable { onHealthChange(if (i <= currentHealth) i - 1 else i) } else Modifier), contentAlignment = Alignment.Center) {
                 if (isLost) Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.Red)
             }
         }
