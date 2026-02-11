@@ -88,6 +88,10 @@ fun AddEditTroupeScreen(
             }
     }
 
+    val (selectedCharacters, unselectedCharacters) = remember(availableCharacters, viewModel.selectedCharacterIds) {
+        availableCharacters.partition { viewModel.selectedCharacterIds.contains(it.id) }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -207,31 +211,60 @@ fun AddEditTroupeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 100.dp, top = 8.dp)
                 ) {
-                    items(availableCharacters, key = { it.id }) { character ->
-                        val isSelected = viewModel.selectedCharacterIds.contains(character.id)
-                        val isExpanded = expandedCharacterId == character.id
-                        
-                        CommonCharacterCard(
-                            character = character,
-                            searchQuery = searchQuery,
-                            isExpanded = isExpanded,
-                            onExpandClick = {
-                                expandedCharacterId = if (isExpanded) null else character.id
-                            },
-                            selectionControl = {
-                                Checkbox(
-                                    checked = isSelected,
-                                    onCheckedChange = {
-                                        if (!character.isUnselectableInTroupe) {
-                                            val current = viewModel.selectedCharacterIds.toMutableSet()
-                                            if (isSelected) current.remove(character.id) else current.add(character.id)
-                                            viewModel.selectedCharacterIds = current
-                                        }
-                                    },
-                                    enabled = !character.isUnselectableInTroupe
-                                )
-                            }
-                        )
+                    if (selectedCharacters.isNotEmpty()) {
+                        item(key = "selected_header") {
+                            Text(
+                                "Selected Characters",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                        items(selectedCharacters, key = { it.id }) { character ->
+                            CharacterSelectionCard(
+                                character = character,
+                                searchQuery = searchQuery,
+                                isSelected = true,
+                                isExpanded = expandedCharacterId == character.id,
+                                onExpandClick = {
+                                    expandedCharacterId = if (expandedCharacterId == character.id) null else character.id
+                                },
+                                onSelectionChange = { selected ->
+                                    val current = viewModel.selectedCharacterIds.toMutableSet()
+                                    if (selected) current.add(character.id) else current.remove(character.id)
+                                    viewModel.selectedCharacterIds = current
+                                }
+                            )
+                        }
+                    }
+
+                    if (unselectedCharacters.isNotEmpty()) {
+                        item(key = "available_header") {
+                            Text(
+                                if (selectedCharacters.isEmpty()) "Available Characters" else "Other Characters",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                        items(unselectedCharacters, key = { it.id }) { character ->
+                            CharacterSelectionCard(
+                                character = character,
+                                searchQuery = searchQuery,
+                                isSelected = false,
+                                isExpanded = expandedCharacterId == character.id,
+                                onExpandClick = {
+                                    expandedCharacterId = if (expandedCharacterId == character.id) null else character.id
+                                },
+                                onSelectionChange = { selected ->
+                                    val current = viewModel.selectedCharacterIds.toMutableSet()
+                                    if (selected) current.add(character.id) else current.remove(character.id)
+                                    viewModel.selectedCharacterIds = current
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -378,4 +411,32 @@ fun AddEditTroupeScreen(
             }
         )
     }
+}
+
+@Composable
+fun CharacterSelectionCard(
+    character: Character,
+    searchQuery: String,
+    isSelected: Boolean,
+    isExpanded: Boolean,
+    onExpandClick: () -> Unit,
+    onSelectionChange: (Boolean) -> Unit
+) {
+    CommonCharacterCard(
+        character = character,
+        searchQuery = searchQuery,
+        isExpanded = isExpanded,
+        onExpandClick = onExpandClick,
+        selectionControl = {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = {
+                    if (!character.isUnselectableInTroupe) {
+                        onSelectionChange(it)
+                    }
+                },
+                enabled = !character.isUnselectableInTroupe
+            )
+        }
+    )
 }
