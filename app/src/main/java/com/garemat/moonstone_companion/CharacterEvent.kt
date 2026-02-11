@@ -42,4 +42,5 @@ sealed interface CharacterEvent {
 
     // Game Lifecycle
     data object AbandonGame : CharacterEvent
+    data object EndGame : CharacterEvent
 }

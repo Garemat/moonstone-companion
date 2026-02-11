@@ -74,6 +74,7 @@ fun ActiveGameScreen(
 
     // Side Drawer State
     var isDrawerOpen by rememberSaveable { mutableStateOf(false) }
+    var showEndGameConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -137,6 +138,17 @@ fun ActiveGameScreen(
                                         Text("($nextCount/$totalPlayers)", style = MaterialTheme.typography.labelSmall, fontSize = 8.sp)
                                     }
                                 }
+                            }
+
+                            // Quick End Game
+                            IconButton(
+                                onClick = { showEndGameConfirm = true }
+                            ) {
+                                Icon(
+                                    Icons.Default.Flag,
+                                    contentDescription = "End Game Now",
+                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                                )
                             }
                         }
                     },
@@ -372,6 +384,32 @@ fun ActiveGameScreen(
                 }
             }
         }
+    }
+
+    // --- Confirmation Dialogs ---
+
+    if (showEndGameConfirm) {
+        AlertDialog(
+            onDismissRequest = { showEndGameConfirm = false },
+            title = { Text("End Game?") },
+            text = { Text("Are you sure you want to end the game now and calculate the winner based on current Moonstones?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showEndGameConfirm = false
+                        viewModel.onEvent(CharacterEvent.EndGame)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Confirm End")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEndGameConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // --- Victory/Tie Dialogs ---

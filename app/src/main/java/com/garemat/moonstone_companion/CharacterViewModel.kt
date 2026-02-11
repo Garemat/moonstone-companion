@@ -391,6 +391,9 @@ class CharacterViewModel(
                 )}
                 nearbyManager.stopAll()
             }
+            CharacterEvent.EndGame -> {
+                handleReadyAction(GameAction.NEXT_TURN, forceEnd = true)
+            }
             else -> {}
         }
     }
@@ -411,9 +414,9 @@ class CharacterViewModel(
         return thresholdsMet
     }
 
-    private fun handleReadyAction(action: GameAction) {
+    private fun handleReadyAction(action: GameAction, forceEnd: Boolean = false) {
         val session = _state.value.gameSession ?: run {
-            if (action == GameAction.NEXT_TURN) attemptNextTurn() else handleRewindTurn()
+            if (action == GameAction.NEXT_TURN) attemptNextTurn(forceEnd) else handleRewindTurn()
             return
         }
 
@@ -424,17 +427,18 @@ class CharacterViewModel(
         }
 
         val readyMsg = SessionMessage.ReadyForAction(action, deviceId, isReady)
+        nearbyManager.sendPayload(endpointId = "LOCAL", message = MessageParser.encode(readyMsg)) // Wait, NearbyManager handles LOCAL?
         nearbyManager.sendPayloadToAll(MessageParser.encode(readyMsg))
         handleSessionMessage("LOCAL", MessageParser.encode(readyMsg))
     }
 
-    private fun attemptNextTurn() {
+    private fun attemptNextTurn(forceEnd: Boolean = false) {
         val currentState = _state.value
         val playersData = playersWithCharacters.value
         if (playersData.isEmpty()) return
 
         // Victory Logic Check
-        if (currentState.currentTurn >= 4) {
+        if (currentState.currentTurn >= 4 || forceEnd) {
             val playerStones = playersData.mapIndexed { pIdx, (troupe, characters) ->
                 val total = characters.indices.sumOf { cIdx ->
                     currentState.characterPlayStates["${pIdx}_${cIdx}"]?.moonstones ?: 0
@@ -445,11 +449,15 @@ class CharacterViewModel(
             val maxStones = playerStones.maxOf { it.second }
             val winners = playerStones.mapIndexedNotNull { index, pair -> if (pair.second == maxStones) index else null }
 
-            if (winners.size == 1) {
-                // Clear winner found
-                val winnerIdx = winners[0]
-                _state.update { it.copy(winnerName = playerStones[winnerIdx].first) }
-                saveGameResult(winnerIdx)
+            if (winners.size == 1 || forceEnd) {
+                if (winners.size == 1) {
+                    val winnerIdx = winners[0]
+                    _state.update { it.copy(winnerName = playerStones[winnerIdx].first) }
+                    saveGameResult(winnerIdx)
+                } else {
+                    _state.update { it.copy(isTie = true) }
+                    saveGameResult(null)
+                }
                 broadcastTurnUpdate(_state.value.currentTurn, _state.value.characterPlayStates)
                 return
             } else if (currentState.currentTurn == 5) {
